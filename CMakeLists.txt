@@ -1,0 +1,22 @@
+cmake_minimum_required(VERSION 3.20)
+project(D3D11Validation LANGUAGES CXX)
+
+if(NOT WIN32)
+    message(FATAL_ERROR "Build on Windows or configure a Windows cross compiler.")
+endif()
+
+add_executable(device-probe native/device_probe.cpp)
+target_compile_features(device-probe PRIVATE cxx_std_17)
+target_link_libraries(device-probe PRIVATE wtsapi32 psapi advapi32)
+if(MSVC)
+    target_compile_options(device-probe PRIVATE /W4 /WX /EHsc)
+else()
+    target_compile_options(device-probe PRIVATE -Wall -Wextra -Werror -Wno-cast-function-type)
+    target_link_options(device-probe PRIVATE -static -municode)
+endif()
+
+add_executable(diagnostic native/diagnostic.cpp)
+target_compile_features(diagnostic PRIVATE cxx_std_17)
+if(MINGW)
+    target_link_options(diagnostic PRIVATE -static -municode)
+endif()

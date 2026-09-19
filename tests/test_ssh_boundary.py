@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the installed status-only gateway using an already pinned SSH host."""
+"""Exercise the installed gateway using an already pinned SSH host."""
 
 import argparse
 from datetime import datetime, timezone
@@ -15,6 +15,7 @@ def main():
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--host", default="d3d11-validation")
     parser.add_argument("--report", required=True, type=Path)
+    parser.add_argument("--phase", choices=("bootstrap", "worker"), default="bootstrap")
     args = parser.parse_args()
     base = ["ssh", "-F", str(args.config), "-o", "ConnectTimeout=5"]
     observations = []
@@ -34,20 +35,29 @@ def main():
 
     status = run("status", [], ["status"], lambda r: r.returncode == 0)
     document = json.loads(status.stdout)
-    inventory = document["inventory"]
-    if (document["allowedOperations"] != ["status"] or
-            document["testExecutionEnabled"] is not False or
-            inventory["session"]["elevated"] is not False or
-            inventory["hardwareD3D11Qualified"] is not False):
-        raise RuntimeError("Status expanded the bootstrap boundary")
-    service = inventory["openSsh"]
-    if service["serviceQueryAvailable"]:
-        if service["servicePresent"] is not True:
-            raise RuntimeError("The installed SSH service was incorrectly reported absent")
-    elif service["servicePresent"] is not None or service["serviceStatus"] is not None:
-        raise RuntimeError("An unavailable service query reported a definitive result")
+    if args.phase == "bootstrap":
+        inventory = document["inventory"]
+        if (document["allowedOperations"] != ["status"] or
+                document["testExecutionEnabled"] is not False or
+                inventory["session"]["elevated"] is not False or
+                inventory["hardwareD3D11Qualified"] is not False):
+            raise RuntimeError("Status expanded the bootstrap boundary")
+        service = inventory["openSsh"]
+        if service["serviceQueryAvailable"]:
+            if service["servicePresent"] is not True:
+                raise RuntimeError("The installed SSH service was incorrectly reported absent")
+        elif service["servicePresent"] is not None or service["serviceStatus"] is not None:
+            raise RuntimeError("An unavailable service query reported a definitive result")
+        session = inventory["session"]
+    else:
+        if (document["allowedOperations"] != ["submit", "start", "status", "results", "cancel"] or
+                document["testExecutionEnabled"] is not True or document["worker"]["elevated"] is not False):
+            raise RuntimeError("Unexpected worker boundary")
+        session = {key: document["worker"][key] for key in ("sessionId", "elevated", "dedicatedAccount")}
 
     commands = json.loads(Path(__file__).with_name("rejected-commands.json").read_text())
+    if args.phase == "worker":
+        commands = [command for command in commands if command not in ("submit", "start", "results", "cancel")]
     for index, command in enumerate(commands):
         run(f"unsupported-command-{index}", ["-T"], [command] if command else [],
             lambda r: r.returncode == 64 and not r.stdout.strip() and
@@ -95,12 +105,12 @@ def main():
             config=altered_config("UserKnownHostsFile", known_hosts))
 
     report = {
-        "schema": "d3d11-ssh-boundary/v1", "phase": "connection-bootstrap",
+        "schema": "d3d11-ssh-boundary/v1", "phase": args.phase,
         "testedUtc": datetime.now(timezone.utc).isoformat(),
         "checks": observations, "checksPassed": len(observations),
-        "session": inventory["session"], "testExecutionEnabled": False,
+        "session": session, "testExecutionEnabled": args.phase == "worker",
         "hardwareD3D11Qualified": False,
-        "scope": "SSH status-only protocol; worker, ACL attack tests and graphics gates remain open",
+        "scope": "SSH transport restrictions; job and graphics acceptance are recorded separately",
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     with args.report.open("x") as stream:
