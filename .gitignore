@@ -1,0 +1,17 @@
+.DS_Store
+/.local/
+/artifacts/
+/build/
+/secrets/
+*.local.json
+*.local.ps1
+*.log
+*.pem
+*.key
+*.pfx
+*.p12
+*.rdp
+*.exe
+*.dll
+*.pdb
+__pycache__/
