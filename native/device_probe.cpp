@@ -105,11 +105,26 @@ std::string loaded_modules() {
 int wmain(int argc, wchar_t** argv) {
     // Operator supplies an empty, owned output directory. The job API never
     // accepts this path or arbitrary executable arguments from a remote request.
-    if (argc != 2 && argc != 3) return 64;
+    if (argc != 2 && argc != 3 && argc != 5) return 64;
     try {
         // Omitting the ordinal performs inventory only. Rendering requires an
-        // explicit operator selection which the protected worker will pin.
+        // explicit operator selection which the protected worker pins by LUID.
+        // Ordinal selection is retained for rejection controls and operator diagnostics.
         UINT selected_index = UINT_MAX;
+        const bool select_luid = argc == 5;
+        LUID requested_luid{};
+        if (select_luid) {
+            require(std::wstring(argv[2]) == L"--luid", "invalid selection mode");
+            auto parse_word = [](const wchar_t* text) {
+                wchar_t* end = nullptr;
+                unsigned long long value = wcstoull(text, &end, 10);
+                require(text[0] >= L'0' && text[0] <= L'9' && end && !*end && value <= UINT_MAX,
+                    "invalid adapter LUID");
+                return static_cast<DWORD>(value);
+            };
+            requested_luid.LowPart = parse_word(argv[3]);
+            requested_luid.HighPart = static_cast<LONG>(parse_word(argv[4]));
+        }
         if (argc == 3) {
             wchar_t* end = nullptr;
             unsigned long index = wcstoul(argv[2], &end, 10);
@@ -165,9 +180,15 @@ int wmain(int argc, wchar_t** argv) {
                 << ",\"flags\":" << description.Flags << ",\"dedicatedVideoMemory\":" << description.DedicatedVideoMemory
                 << ",\"luidLow\":" << description.AdapterLuid.LowPart
                 << ",\"luidHigh\":" << description.AdapterLuid.HighPart << '}';
-            if (index == selected_index && description.VendorId == 0xffff &&
+            const bool identity_matches = select_luid
+                ? description.AdapterLuid.LowPart == requested_luid.LowPart &&
+                    description.AdapterLuid.HighPart == requested_luid.HighPart
+                : index == selected_index;
+            if (identity_matches && description.VendorId == 0xffff &&
                 std::wstring(description.Description) == L"Example Hardware Adapter" &&
                 !(description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+                require(!selected.value, "ambiguous adapter identity");
+                selected_index = index;
                 selected.value = candidate.value;
                 candidate.value = nullptr;
                 selected_desc = description;

@@ -74,7 +74,7 @@ public sealed class ValidationStore : IDisposable {
         directories.Add(handle); Verify(handle, path, true);
     }
     string Resolve(string name) {
-        if (!System.Text.RegularExpressions.Regex.IsMatch(name, "\\A[a-z0-9-]+\\.json\\z")) throw new IOException("invalid_store_name");
+        if (!System.Text.RegularExpressions.Regex.IsMatch(name, "\\A[a-z0-9-]+\\.(json|bin)\\z")) throw new IOException("invalid_store_name");
         return Path.Combine(root, name);
     }
     static FileStream OpenFile(string path, bool write, bool create) {
@@ -85,14 +85,20 @@ public sealed class ValidationStore : IDisposable {
         catch { handle.Dispose(); throw; }
     }
     public bool Exists(string name) { return File.Exists(Resolve(name)); }
-    public string Read(string name) {
+    public byte[] ReadBytes(string name, int maximum) {
         string path = Resolve(name);
         using (FileStream stream = OpenFile(path, false, false)) {
-            Verify(stream.SafeFileHandle, path, false);
-            if (stream.Length > 16777216) throw new IOException("file_too_large");
-            using (StreamReader reader = new StreamReader(stream, new UTF8Encoding(false, true))) return reader.ReadToEnd();
+            if (maximum < 0 || maximum > 16777216 || stream.Length > maximum) throw new IOException("file_too_large");
+            byte[] bytes = new byte[(int)stream.Length]; int offset = 0;
+            while (offset < bytes.Length) {
+                int count = stream.Read(bytes, offset, bytes.Length - offset);
+                if (count == 0) throw new IOException("incomplete_file");
+                offset += count;
+            }
+            return bytes;
         }
     }
+    public string Read(string name) { return new UTF8Encoding(false, true).GetString(ReadBytes(name, 16777216)); }
     public void Write(string name, string text) {
         string destination = Resolve(name);
         // Verify the old file under the exclusive store lock before atomic replacement.

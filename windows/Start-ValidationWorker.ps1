@@ -3,8 +3,9 @@
 param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'Validation.Jobs.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'Validation.Protocol.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Validation.Jobs.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Validation.Protocol.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Validation.Fixtures.psm1')
 $session = & (Join-Path $PSScriptRoot 'Get-ValidationSession.ps1') | ConvertFrom-Json
 if ($session.clientProtocolType -notin @(0,2) -or $session.connectionState -notin @(0,4)) { throw 'unsupported_session' }
 $epoch = New-ValidationNonce
@@ -17,6 +18,8 @@ if (-not $acquired) { $singleton.Dispose(); throw 'worker_already_running' }
 $child = $null
 $active = $null
 $timer = $null
+$fixture = $null
+$execution = $null
 try {
     while ($true) {
         $store = Open-ValidationStore
@@ -32,26 +35,22 @@ try {
                 $latest = Read-ValidationRecord $store $name
                 $terminal = ''
                 if ($latest.cancelRequested) { $terminal = 'cancelled' }
-                elseif ($timer.ElapsedMilliseconds -gt 2000) { $terminal = 'timed_out' }
+                elseif ($timer.ElapsedMilliseconds -gt $fixture.timeoutMs) { $terminal = 'timed_out' }
                 elseif ($child.Finished) {
                     $latest.exitCode = $child.ExitCode
                     $terminal = $(if ($latest.exitCode -eq 0) { 'completed' } else { 'failed' })
                 }
                 if ($terminal) {
                     $child.Dispose(); $child = $null
+                    $fixtureEvidence = $null
+                    $failureCode = $null
+                    try { $fixtureEvidence = Complete-ValidationFixture $fixture $latest $terminal }
+                    catch { $terminal = 'failed'; $failureCode = 'fixture_validation_failed' }
+                    finally { if ($null -ne $fixture.outputGuard) { $fixture.outputGuard.Dispose() } }
                     $latest.state = $terminal; $latest.updatedUtc = $now
-                    $latest.result = [ordered]@{
-                        schema = 'd3d11-diagnostic-result/v1'; kind = $latest.kind
-                        jobId = $latest.jobId; inputSha256 = $latest.inputSha256
-                        executionNonce = $latest.executionNonce; deploymentSha256 = $deployment
-                        sourceRevision = $policy.sourceRevision; binarySha256 = $policy.files.'diagnostic.exe'
-                        workerEpoch = $epoch; session = $session
-                        durationMs = $latest.durationMs; elapsedMs = $timer.ElapsedMilliseconds
-                        childPid = $childId; completion = $terminal
-                        hardwareD3D11Qualified = $false
-                    }
+                    $latest.result = New-ValidationJobResult $latest $execution $fixtureEvidence $failureCode
                     Write-ValidationRecord $store $name $latest
-                    $active = $null
+                    $active = $null; $fixture = $null; $execution = $null
                 }
             }
             if ($null -eq $active) {
@@ -68,14 +67,29 @@ try {
                         $job.deploymentSha256 -cne $deployment) { throw 'job_binding_mismatch' }
                     $job.state = 'running'; $job.updatedUtc = $now
                     Write-ValidationRecord $store $name $job
-                    $exe = Join-Path $PSScriptRoot 'diagnostic.exe'
-                    if ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant() -cne $policy.files.'diagnostic.exe') {
-                        throw 'executable_hash_mismatch'
-                    }
                     $timer = [Diagnostics.Stopwatch]::StartNew()
-                    $child = [ValidationChild]::new($exe, [string]$job.durationMs, $PSScriptRoot)
-                    $childId = $child.Id
-                    $active = $job
+                    $execution = [pscustomobject]@{timer=$timer; session=$null; binarySha256=$null; childPid=$null}
+                    try {
+                        $execution.session = & (Join-Path $PSScriptRoot 'Get-ValidationSession.ps1') | ConvertFrom-Json
+                        $fixture = New-ValidationFixture $job $execution.session
+                        $exe = Join-Path $PSScriptRoot $fixture.executable
+                        $execution.binarySha256 = $policy.files.($fixture.executable)
+                        if ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant() -cne $execution.binarySha256) {
+                            throw 'executable_hash_mismatch'
+                        }
+                        $child = [ValidationChild]::new($exe, $fixture.arguments, $PSScriptRoot)
+                        $execution.childPid = $child.Id
+                        $active = $job
+                    } catch {
+                        if ($null -ne $child) { $child.Dispose(); $child = $null }
+                        if ($null -ne $fixture -and $null -ne $fixture.outputGuard) { $fixture.outputGuard.Dispose() }
+                        $code = 'fixture_start_failed'
+                        if ($_.Exception.Data['validationCode'] -ceq 'unapproved_session') { $code = 'unapproved_session' }
+                        $job.state = 'failed'; $job.updatedUtc = [DateTime]::UtcNow.ToString('o')
+                        $job.result = New-ValidationJobResult $job $execution $null $code
+                        Write-ValidationRecord $store $name $job
+                        $fixture = $null; $execution = $null
+                    }
                     break
                 }
             }
@@ -84,5 +98,6 @@ try {
     }
 } finally {
     if ($null -ne $child) { $child.Dispose() }
+    if ($null -ne $fixture -and $null -ne $fixture.outputGuard) { $fixture.outputGuard.Dispose() }
     $singleton.ReleaseMutex(); $singleton.Dispose()
 }

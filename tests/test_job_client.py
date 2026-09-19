@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Result verification rejects stale or mismatched envelopes independently of SSH."""
 import copy
+import base64
+import hashlib
 import importlib.util
 from pathlib import Path
 import unittest
@@ -44,6 +46,36 @@ class ResultBindingTests(unittest.TestCase):
         completed = type('Completed', (), dict(returncode=0,stdout=b'{"nonce":"old"}',stderr=b''))()
         with patch.object(client.subprocess, 'run', return_value=completed):
             with self.assertRaises(ValueError): client.invoke(Path('unused'),'status',{'nonce':'new'})
+
+    def native_response(self):
+        self.job['submitRequest'] = {'kind': 'device'}
+        response = copy.deepcopy(self.response)
+        artifacts = []
+        for name, data in [('adapters.json', b'{}'), ('report.json', b'{}'), ('pixels.bin', bytes(256))]:
+            artifacts.append(dict(name=name, byteLength=len(data),
+                                  sha256=hashlib.sha256(data).hexdigest(),
+                                  base64=base64.b64encode(data).decode()))
+        response['result']['fixture'] = {'artifacts': artifacts}
+        return response
+
+    def test_native_artifact_integrity(self):
+        self.request(self.native_response())
+        for key, value in [('byteLength', 17), ('sha256', '0'*64),
+                           ('base64', 'invalid!'), ('name', '../private.json')]:
+            with self.subTest(key=key):
+                response = self.native_response()
+                response['result']['fixture']['artifacts'][0][key] = value
+                with self.assertRaises(ValueError): self.request(response)
+
+    def test_missing_or_duplicate_native_artifacts(self):
+        for change in ('missing_fixture', 'missing_file', 'duplicate_file'):
+            with self.subTest(change=change):
+                response = self.native_response()
+                if change == 'missing_fixture': response['result']['fixture'] = None
+                elif change == 'missing_file': response['result']['fixture']['artifacts'].pop()
+                else: response['result']['fixture']['artifacts'].append(
+                    copy.deepcopy(response['result']['fixture']['artifacts'][0]))
+                with self.assertRaises(ValueError): self.request(response)
 
 
 if __name__ == '__main__': unittest.main()

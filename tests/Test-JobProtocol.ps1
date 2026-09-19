@@ -12,8 +12,13 @@ $null = ConvertFrom-ValidationRequest submit $submit
 foreach ($operation in 'start','status','results','cancel') {
     $null = ConvertFrom-ValidationRequest $operation $job
 }
+foreach ($kind in 'device','reject-software','reject-other-gpu','reject-session') {
+    $null = ConvertFrom-ValidationRequest submit ($submit.Replace('diagnostic',$kind).Replace('200','0'))
+}
 $cases = @(
     @('submit', ''), @('submit', '{}'), @('submit', '[]'), @('submit', 'null'),
+    @('submit', $submit.Replace('diagnostic','device')),
+    @('submit', $submit.Replace('}', ',"adapterOrdinal":"0"}')),
     @('submit', ($submit + ' trailing')), @('submit', ('[' + $submit + ']')),
     @('submit', $submit.Replace('"version":"1"', '"version":"1","version":"1"')),
     @('submit', $submit.Replace('"version"', '"Version"')),
@@ -43,4 +48,4 @@ foreach ($case in $cases) {
     if (-not $rejected) { throw ('Protocol rejection failed for case ' + $caseIndex) }
     $caseIndex++
 }
-Write-Output ('PASS: five valid operation requests and ' + $cases.Count + ' rejected protocol cases.')
+Write-Output ('PASS: nine valid requests and ' + $cases.Count + ' rejected protocol cases.')

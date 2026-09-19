@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Typed SSH job client. Credentials and raw result records belong in ignored storage."""
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -40,9 +41,9 @@ def invoke(config, operation, request=None):
     return response
 
 
-def submit(config, duration=0, nonce=None):
+def submit(config, duration=0, nonce=None, kind="diagnostic"):
     request = {'version': '1', 'nonce': nonce or secrets.token_hex(32),
-               'kind': 'diagnostic', 'durationMs': str(duration)}
+               'kind': kind, 'durationMs': str(duration)}
     response = invoke(config, 'submit', request)
     if response.get('inputSha256') != hashlib.sha256(encode(request)).hexdigest():
         raise ValueError('Input binding mismatch')
@@ -72,6 +73,22 @@ def operate(config, operation, job):
                 raise ValueError('Result binding mismatch: ' + key)
         if not response['executionNonce'] or response.get('exitCode') != 0:
             raise ValueError('Missing successful execution')
+    fixture = (response.get('result') or {}).get('fixture')
+    expected_kind = job.get('submitRequest', {}).get('kind')
+    if operation == 'results' and response.get('state') == 'completed' and expected_kind == 'device' and not fixture:
+        raise ValueError('Missing native preflight evidence')
+    if fixture:
+        names = set()
+        for artifact in fixture.get('artifacts', []):
+            name = artifact.get('name')
+            if name not in ('adapters.json','report.json','pixels.bin') or name in names:
+                raise ValueError('Unexpected artifact name')
+            names.add(name)
+            data = base64.b64decode(artifact['base64'], validate=True)
+            if len(data) != artifact['byteLength'] or hashlib.sha256(data).hexdigest() != artifact['sha256']:
+                raise ValueError('Artifact content mismatch')
+        if response['state'] == 'completed' and names != {'adapters.json','report.json','pixels.bin'}:
+            raise ValueError('Missing native preflight artifact')
     return response
 
 
@@ -92,6 +109,7 @@ def main():
     parser.add_argument('--ssh-config', type=Path, default=Path('.local/ssh_config'))
     parser.add_argument('--job', type=Path)
     parser.add_argument('--duration-ms', type=int, default=0)
+    parser.add_argument('--kind', choices=('diagnostic','device','reject-software','reject-other-gpu','reject-session'), default='diagnostic')
     parser.add_argument('operation', choices=sorted(OPERATIONS))
     args = parser.parse_args()
     if args.operation == 'status' and args.job is None:
@@ -100,8 +118,16 @@ def main():
         parser.error('--job is required for this operation')
     elif args.operation == 'submit':
         if args.job.exists():
-            parser.error('Refusing to overwrite an existing local job')
-        response = submit(args.ssh_config, args.duration_ms)
+            pending = json.loads(args.job.read_text())
+            if pending.get('schema') != 'd3d11-pending-submit/v1':
+                parser.error('Refusing to overwrite an existing local job')
+            if pending['kind'] != args.kind or pending['durationMs'] != args.duration_ms:
+                parser.error('Retry must use the original pending fixture and duration')
+        else:
+            pending = {'schema':'d3d11-pending-submit/v1', 'nonce':secrets.token_hex(32),
+                       'kind':args.kind, 'durationMs':args.duration_ms}
+            save(args.job, pending)
+        response = submit(args.ssh_config, args.duration_ms, nonce=pending['nonce'], kind=args.kind)
         save(args.job, response)
     else:
         job = json.loads(args.job.read_text())

@@ -1,6 +1,6 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'Validation.Protocol.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Validation.Protocol.psm1')
 if (-not ('ValidationStore' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'Validation.Runtime.cs') }
 $script:root = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'D3D11Validation'
 $script:queue = Join-Path $script:root 'data\queue-v1'
@@ -43,6 +43,21 @@ function Get-ValidationJobSummary($Job, [string]$Nonce) {
         state = $Job.state; inputSha256 = $Job.inputSha256
         deploymentSha256 = $Job.deploymentSha256; executionNonce = $Job.executionNonce
         createdUtc = $Job.createdUtc; updatedUtc = $Job.updatedUtc
+    }
+}
+
+function New-ValidationJobResult($Job, $Execution, $FixtureEvidence, [string]$FailureCode) {
+    return [ordered]@{
+        schema = 'd3d11-job-result/v1'; kind = $Job.kind
+        jobId = $Job.jobId; inputSha256 = $Job.inputSha256
+        executionNonce = $Job.executionNonce; deploymentSha256 = $Job.deploymentSha256
+        sourceRevision = $script:policy.sourceRevision; sourceState = $script:policy.sourceState
+        binarySha256 = $Execution.binarySha256; fixture = $FixtureEvidence
+        failureCode = $(if ($FailureCode) { $FailureCode } else { $null })
+        workerEpoch = $Job.workerEpoch; session = $Execution.session
+        durationMs = $Job.durationMs; elapsedMs = $Execution.timer.ElapsedMilliseconds
+        childPid = $Execution.childPid; completion = $Job.state
+        hardwareD3D11Qualified = $false
     }
 }
 function Invoke-ValidationOperation([string]$Operation, [string]$Text) {
@@ -99,8 +114,18 @@ function Invoke-ValidationOperation([string]$Operation, [string]$Text) {
             Write-ValidationRecord $store $name $job
         }
         $response = Get-ValidationJobSummary $job $request['nonce']
+        $workerAvailable = $true
+        if ($job.state -cin @('queued','running')) {
+            try { $null = Get-ValidationHeartbeat $store }
+            catch { $workerAvailable = $false }
+            # Keep the last durable state: a stopped heartbeat alone does not
+            # prove that a suspended child has exited or that reexecution is safe.
+            $response['workerAvailable'] = $workerAvailable
+            $response['recoveryRequired'] = -not $workerAvailable
+        }
         if ($Operation -ceq 'results') {
             if ($job.state -cnotin @('completed', 'cancelled', 'timed_out', 'failed', 'stale')) {
+                if (-not $workerAvailable) { Stop-ValidationRequest 'worker_unavailable' }
                 Stop-ValidationRequest 'results_incomplete'
             }
             $response['result'] = $job.result
@@ -111,4 +136,4 @@ function Invoke-ValidationOperation([string]$Operation, [string]$Text) {
 }
 Export-ModuleMember -Function Open-ValidationStore, Read-ValidationRecord, Write-ValidationRecord,
     Get-ValidationDeployment, Get-ValidationProgram, Get-ValidationPolicy,
-    Get-ValidationHeartbeat, Invoke-ValidationOperation
+    Get-ValidationHeartbeat, Invoke-ValidationOperation, New-ValidationJobResult

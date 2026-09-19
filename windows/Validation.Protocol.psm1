@@ -63,10 +63,10 @@ function ConvertFrom-ValidationRequest([string]$Operation, [string]$Text) {
         Stop-ValidationRequest 'invalid_request'
     }
     if ($Operation -ceq 'submit') {
-        # Begin with a harmless, fixed diagnostic fixture. Graphics fixtures are
-        # added only through a separately reviewed deployment and policy update.
-        if ($fields['kind'] -cne 'diagnostic' -or $fields['durationMs'] -cnotmatch '^(0|[1-9][0-9]{0,3})$' -or
-            [int]$fields['durationMs'] -gt 5000) {
+        # Fixture names select protected server policy; no executable, adapter,
+        # or destination path is accepted from the client.
+        if ($fields['kind'] -cnotin @('diagnostic','device','reject-software','reject-other-gpu','reject-session') -or $fields['durationMs'] -cnotmatch '^(0|[1-9][0-9]{0,3})$' -or
+            [int]$fields['durationMs'] -gt 5000 -or ($fields['kind'] -cne 'diagnostic' -and $fields['durationMs'] -cne '0')) {
             Stop-ValidationRequest 'invalid_fixture'
         }
     } elseif ($fields['jobId'] -cnotmatch '^[0-9a-f]{32}$' -or
