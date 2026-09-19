@@ -1,0 +1,24 @@
+# Dedicated bootstrap configuration. Resolve every @@TOKEN@@ before installation.
+# Supported directives must pass the installed sshd.exe -t check before start.
+Port 22222
+AddressFamily inet
+ListenAddress @@LISTEN_ADDRESS@@
+HostKey C:/ProgramData/D3D11Validation/ssh/ssh_host_ed25519_key
+AuthorizedKeysFile C:/ProgramData/D3D11Validation/ssh/authorized_keys
+AllowUsers d3d11validator@@CLIENT_RESTRICTION@@
+AuthenticationMethods publickey
+PubkeyAuthentication yes
+PasswordAuthentication no
+PermitEmptyPasswords no
+AllowTcpForwarding no
+AllowAgentForwarding no
+DisableForwarding yes
+PermitTTY no
+MaxSessions 1
+MaxAuthTries 3
+LoginGraceTime 20
+ClientAliveInterval 30
+ClientAliveCountMax 2
+LogLevel VERBOSE
+ForceCommand C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoLogo -NoProfile -NonInteractive -File C:/ProgramData/D3D11Validation/program/Invoke-ValidationGateway.ps1
+# No SFTP subsystem. No interactive shell or client-selected executable.
