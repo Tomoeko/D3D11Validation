@@ -14,9 +14,7 @@ if (Test-Path variable:PSNativeCommandUseErrorActionPreference) {
     $PSNativeCommandUseErrorActionPreference = $false
 }
 
-$commands = @('', 'STATUS', 'status ', ' status', "status`nwhoami", 'status; whoami',
-    'status & whoami', '$(whoami)', 'powershell.exe', 'cmd.exe', 'sftp',
-    'scp -t ../../outside', '../status', 'submit', 'start', 'results', 'cancel')
+$commands = @(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'rejected-commands.json') -Raw | ConvertFrom-Json)
 try {
     foreach ($command in $commands) {
         $env:SSH_ORIGINAL_COMMAND = $command

@@ -1,0 +1,19 @@
+[
+  "",
+  "STATUS",
+  "status ",
+  " status",
+  "status\nwhoami",
+  "status; whoami",
+  "status & whoami",
+  "$(whoami)",
+  "powershell.exe",
+  "cmd.exe",
+  "sftp",
+  "scp -t ../../outside",
+  "../status",
+  "submit",
+  "start",
+  "results",
+  "cancel"
+]

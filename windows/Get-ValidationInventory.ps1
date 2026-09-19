@@ -9,8 +9,11 @@ if ($env:OS -ne 'Windows_NT') {
     throw 'Run this inventory on the Windows validation host.'
 }
 
-$operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem
-$graphicsAdapters = @(Get-CimInstance -ClassName Win32_VideoController |
+$version = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+$graphicsInventoryAvailable = $true
+$graphicsAdapters = @()
+try {
+    $graphicsAdapters = @(Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop |
     ForEach-Object {
         [ordered]@{
             name = $_.Name
@@ -18,7 +21,20 @@ $graphicsAdapters = @(Get-CimInstance -ClassName Win32_VideoController |
             status = $_.Status
         }
     })
-$sshService = Get-Service -Name sshd -ErrorAction SilentlyContinue
+} catch {
+    # Key-only SSH tokens may not have access to WMI. Do not expand their rights
+    # for optional inventory; the native device probe must qualify actual use.
+    $graphicsInventoryAvailable = $false
+}
+$sshService = $null
+$serviceQueryAvailable = $true
+try {
+    $sshService = Get-Service -Name sshd -ErrorAction Stop
+} catch {
+    # Restricted tokens can receive ObjectNotFound even for a running service.
+    # A failed lookup cannot establish absence.
+    $serviceQueryAvailable = $false
+}
 $session = Get-Process -Id $PID
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
@@ -27,11 +43,13 @@ $principal = [Security.Principal.WindowsPrincipal]::new($identity)
     schema = 'd3d11-validation-inventory/v1'
     collectedUtc = [DateTime]::UtcNow.ToString('o')
     operatingSystem = [ordered]@{
-        caption = $operatingSystem.Caption
-        version = $operatingSystem.Version
-        build = $operatingSystem.BuildNumber
-        architecture = $operatingSystem.OSArchitecture
+        caption = $version.ProductName
+        version = '{0}.{1}.{2}' -f $version.CurrentMajorVersionNumber,
+            $version.CurrentMinorVersionNumber, $version.CurrentBuildNumber
+        build = $version.CurrentBuildNumber
+        architecture = if ([Environment]::Is64BitOperatingSystem) { '64-bit' } else { '32-bit' }
     }
+    graphicsInventoryAvailable = $graphicsInventoryAvailable
     graphicsAdapters = $graphicsAdapters
     session = [ordered]@{
         id = $session.SessionId
@@ -41,7 +59,8 @@ $principal = [Security.Principal.WindowsPrincipal]::new($identity)
     openSsh = [ordered]@{
         serverBinaryPresent = Test-Path -LiteralPath (
             Join-Path $env:WINDIR 'System32/OpenSSH/sshd.exe')
-        servicePresent = $null -ne $sshService
+        serviceQueryAvailable = $serviceQueryAvailable
+        servicePresent = if ($serviceQueryAvailable) { $null -ne $sshService } else { $null }
         serviceStatus = if ($null -ne $sshService) {
             $sshService.Status.ToString()
         } else { $null }

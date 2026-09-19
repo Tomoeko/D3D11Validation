@@ -30,6 +30,20 @@ if ($ListenAddress -ceq $ClientAddress) {
     throw 'The client and server must have different addresses.'
 }
 
+# Two disjoint ranges cover every IPv4 address except the approved client.
+# Explicit blocks prevent unrelated broad allow rules from expanding SSH access.
+$clientValue = [uint64]0
+foreach ($octet in ([Net.IPAddress]::Parse($ClientAddress).GetAddressBytes())) {
+    $clientValue = ($clientValue -shl 8) -bor $octet
+}
+function ConvertTo-IPv4Text([uint64]$Value) {
+    return (@(24,16,8,0 | ForEach-Object { ($Value -shr $_) -band 255 }) -join '.')
+}
+$blockedIpv4 = @(
+    ('0.0.0.0-' + (ConvertTo-IPv4Text ($clientValue - 1))),
+    ((ConvertTo-IPv4Text ($clientValue + 1)) + '-255.255.255.255')
+)
+
 $keyText = (Get-Content -LiteralPath $PublicKeyPath -Raw).Trim()
 if ($keyText -cnotmatch '^ssh-ed25519 ([A-Za-z0-9+/]+={0,2})(?: [^\r\n]*)?$') {
     throw 'Supply a plain OpenSSH Ed25519 public key without authorized-key options.'
@@ -75,6 +89,17 @@ $manifest = [ordered]@{
     accountPasswordStored = $false
     allowedOperations = @('status')
     deploymentRoot = 'C:/ProgramData/D3D11Validation'
+    firewall = [ordered]@{
+        program = 'C:/Windows/System32/OpenSSH/sshd.exe'
+        allowRule = 'D3D11Validation-In-TCP'
+        blockOtherIpv4Rule = 'D3D11Validation-Block-Other-IPv4'
+        blockOtherIpv4 = $blockedIpv4
+        blockIpv6Rule = 'D3D11Validation-Block-IPv6'
+        # Windows Firewall rejects a zero-length IPv6 prefix. These halves cover it.
+        blockIpv6 = @('::/1', '8000::/1')
+        installationGuardRule = 'D3D11Validation-InstallationGuard'
+        guardMustRemainEnabledUntilQualified = $true
+    }
     files = @(
         foreach ($relativePath in @(
             'windows/Invoke-ValidationGateway.ps1',

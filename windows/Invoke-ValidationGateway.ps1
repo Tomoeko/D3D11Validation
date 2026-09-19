@@ -22,7 +22,13 @@ try {
         inventory = $inventory
     } | ConvertTo-Json -Depth 8
 } catch {
-    # Exceptions may include personal paths. Keep details local to operator work.
-    [Console]::Error.WriteLine('{"error":"inventory_unavailable"}')
+    # Expose only diagnostic categories; exception messages can contain paths.
+    $failure = [ordered]@{
+        error = 'inventory_unavailable'
+        exception = $_.Exception.GetType().Name
+        category = $_.CategoryInfo.Category.ToString()
+        line = $_.InvocationInfo.ScriptLineNumber
+    }
+    [Console]::Error.WriteLine(($failure | ConvertTo-Json -Compress))
     exit 69
 }
