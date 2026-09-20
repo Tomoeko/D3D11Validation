@@ -31,10 +31,14 @@ summaries and their limits are in [VALIDATION.md](VALIDATION.md).
 
 ## Release discipline
 
-- [ ] Complete hosted-history removal or publish from a new, independent repository
-      before making any repository that held host records public.
-- [ ] Audit hosted pull requests, forks, release attachments and workflow artifacts
-      as well as Git objects before changing visibility.
+- [x] Prepare a new, independent repository containing only audited history; keep
+      the former repository private and archived. Original commit IDs and the
+      private baseline blob are not retrievable from the replacement repository.
+- [x] Audit hosted pull requests, forks, release attachments and workflow artifacts
+      as well as Git objects. The replacement has none of those hosted artifacts.
+
+The replacement remains private pending an explicit publication decision. Repeat
+the privacy review for subsequent changes before changing visibility.
 
 Source-only tests are useful checks, but they do not close physical-host gates.
 Never infer completion from a disconnected desktop session, a maintenance status,
