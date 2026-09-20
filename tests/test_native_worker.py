@@ -3,17 +3,16 @@
 import argparse
 import base64
 import hashlib
-import importlib.util
 import json
 from pathlib import Path
 import struct
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "client"))
 from adapter_evidence import verify_selection
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('client', ROOT/'client/validation_client.py')
-client = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(client)
+import validation_client as client
 
 
 def verify(result, kind, policy_hash, policy, baseline, session_state):

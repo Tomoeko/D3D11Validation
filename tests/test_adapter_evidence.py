@@ -2,6 +2,9 @@ import copy
 import hashlib
 import json
 import unittest
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "client"))
 from adapter_evidence import verify_selection
 
 

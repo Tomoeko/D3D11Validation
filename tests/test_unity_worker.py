@@ -7,78 +7,15 @@ or conceal a native pair mismatch. Capture-off still retains draw observation;
 it does not qualify completely uninstrumented execution.
 """
 import argparse
-import base64
-import hashlib
-import importlib.util
 import json
 from pathlib import Path
-import struct
 
-from adapter_evidence import verify_selection
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('client', ROOT/'client/validation_client.py')
-client = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(client)
-
-
-def require(value, message):
-    if not value:
-        raise ValueError(message)
-
-
-def digest(data):
-    return hashlib.sha256(data).hexdigest()
-
-
-def verify(result, kind, policy_hash, policy, package, baseline):
-    require(result['deploymentSha256'] == policy_hash, 'Deployment mismatch')
-    require(result['state'] == 'completed' and result['exitCode'] == 0, 'Unity execution failed')
-    record = result['result']
-    require(record['kind'] == kind and record['failureCode'] is None, 'Fixture mismatch')
-    require(record['sourceRevision'] == policy['sourceRevision'] and
-            record['sourceState'] == policy['sourceState'], 'Source provenance mismatch')
-    require(record['binarySha256'] == package['files']['RuntimeProbe.exe'], 'Private player mismatch')
-    fixture = record['fixture']
-    files = {a['name']:base64.b64decode(a['base64'],validate=True) for a in fixture['artifacts']}
-    env = fixture['environment']
-    verify_selection(record, files, baseline, policy)
-    for key, expected in [('featureLevel',package['featureLevel']), ('creationFlags',package['creationFlags']),
-                          ('operatingSystem',baseline['operatingSystem']), ('processSessionId',0),
-                          ('clientProtocolType',-1), ('connectionState',-1), ('executionContext','Session0')]:
-        require(env[key] == expected, 'Environment mismatch: ' + key)
-    require(len(env['runtimeIdentities']) == len(baseline['runtimeIdentities']), 'Runtime count mismatch')
-    for actual, expected in zip(env['runtimeIdentities'],baseline['runtimeIdentities']):
-        for key in ('file','version','sha256'):
-            require(actual[key] == expected[key], 'Native runtime drift')
-        signature = dict(type=actual['signatureType'], signer=actual['signer'],
-                         certificateSha256=actual['certificateSha256'])
-        require(actual['signatureStatus'] == 'Valid' and signature in expected['signatures'], 'Signer drift')
-    require(digest(json.dumps(env,separators=(',',':'),ensure_ascii=False).encode()) ==
-            fixture['environmentSha256'], 'Environment content mismatch')
-    require(env['nativeHardwarePreflightPassed'] and not env['fullQualificationComplete'], 'Qualification mismatch')
-    expected_images = ['RuntimeProbe.exe', 'UnityPlayer.dll',
-                       'MonoBleedingEdge/EmbedRuntime/mono-2.0-bdwgc.dll',
-                       'RuntimeProbe_Data/Managed/Assembly-CSharp.dll']
-    require(env.get('playerImages') == [dict(file=name, sha256=package['files'][name])
-                                       for name in expected_images], 'Loaded player image drift')
-    require(env.get('loadedImageClosureComplete') is False, 'Unexpected complete image closure claim')
-    comparison = fixture['comparison']
-    require(comparison['case'] == kind and comparison['profileMatched'] and
-            comparison['repeatedPixelsEqual'], 'Profile or repeat mismatch')
-    traced = kind.endswith('-traced')
-    require(comparison['captureEnabled'] == traced and comparison['drawHooksEnabled'] ==
-            (not kind.endswith('-unhooked')), 'Instrumentation mode mismatch')
-    require(len(files['pixels.bin']) == 256, 'Incomplete pixels')
-    if traced:
-        for stage in ('vs','ps'):
-            first = files[f'draw-0001-{stage}.bin']
-            require(first == files[f'draw-0002-{stage}.bin'], 'Repeated bound shader mismatch')
-            require(first[:4] == b'DXBC' and len(first) >= 32 and
-                    struct.unpack_from('<I',first,24)[0] == len(first), 'Incomplete DXBC')
-            if 'negative' not in kind or stage == 'vs':
-                require(digest(first) == package['referenceDxbc'][stage], 'Unexpected bound shader')
-    return files, fixture['environmentSha256']
+sys.path.insert(0, str(ROOT / "client"))
+from unity_evidence import digest, require, verify
+import validation_client as client
 
 
 def main():
