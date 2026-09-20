@@ -84,7 +84,8 @@ def operate(config, operation, job):
         if unity:
             expected_names = {'unity-startup.json'}
             if expected_kind != 'unity-startup' and response['state'] == 'completed':
-                expected_names = {'device.bin','draws.bin','result.tsv','pixels.bin'}
+                expected_names = {'device.bin','result.tsv','pixels.bin'}
+                if not expected_kind.endswith('-unhooked'): expected_names.add('draws.bin')
                 if expected_kind.endswith('-traced'):
                     expected_names |= {f'draw-{draw:04d}-{stage}.bin' for draw in (1,2) for stage in ('vs','ps')}
         names = set()

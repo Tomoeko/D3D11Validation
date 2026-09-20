@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import zipfile
 
-EXCLUDED = {'d3d11.dll', 'dxgi.dll', 'dxbc_d3d11_original.dll'}
+EXCLUDED = {'d3d11.dll', 'dxgi.dll', 'dxbc_d3d11_original.dll', 'validation-observer.dll'}
 
 
 def main():
@@ -15,6 +15,8 @@ def main():
     parser.add_argument('--player', type=Path, required=True)
     parser.add_argument('--bundle', type=Path, required=True)
     parser.add_argument('--trace-library', type=Path)
+    parser.add_argument('--observer-library', type=Path)
+    parser.add_argument('--managed-harness', type=Path)
     parser.add_argument('--regenerated-bundle', type=Path)
     parser.add_argument('--negative-bundle', type=Path)
     parser.add_argument('--creation-flags', type=int)
@@ -27,14 +29,16 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--manifest', type=Path, required=True)
     args = parser.parse_args()
-    mode = 'draw' if args.trace_library else 'startup'
+    if args.trace_library and args.observer_library:
+        parser.error('Capture and unhooked observation require separate package directories')
+    mode = 'unhooked' if args.observer_library else ('draw' if args.trace_library else 'startup')
     if not re.fullmatch(r'unity-' + mode + r'-v[1-9][0-9]*', args.deployment):
         parser.error('Invalid deployment name')
-    if mode == 'draw' and not all((args.regenerated_bundle, args.negative_bundle, args.reference_vs,
+    if mode != 'startup' and not all((args.regenerated_bundle, args.negative_bundle, args.reference_vs,
                                    args.reference_ps, args.reference_pixels)):
         parser.error('Draw packages require both other bundles and complete reference artifacts')
-    if mode == 'draw' and (args.creation_flags is None or args.feature_level is None):
-        parser.error('Draw packages require the reviewed native feature level and creation flags')
+    if mode != 'startup' and (args.creation_flags is None or args.feature_level is None or not args.managed_harness):
+        parser.error('Draw packages require a reviewed managed harness, native feature level and creation flags')
     if args.output.exists() or args.manifest.exists():
         parser.error('Preserve existing packages and manifests')
     content = {}
@@ -55,14 +59,16 @@ def main():
         content['recovered.bundle'] = args.bundle.read_bytes()
         content['regenerated.bundle'] = args.regenerated_bundle.read_bytes()
         content['negative.bundle'] = args.negative_bundle.read_bytes()
-        content['d3d11.dll'] = args.trace_library.read_bytes()
+        content['RuntimeProbe_Data/Managed/Assembly-CSharp.dll'] = args.managed_harness.read_bytes()
+        if mode == 'draw': content['d3d11.dll'] = args.trace_library.read_bytes()
+        else: content['validation-observer.dll'] = args.observer_library.read_bytes()
     required = {'RuntimeProbe.exe', 'UnityPlayer.dll', 'RuntimeProbe_Data/globalgamemanagers'}
     if not required <= content.keys():
         raise ValueError('Missing required private player files')
     manifest = dict(schema='d3d11-unity-' + mode + '-package/v1', deployment=args.deployment,
                     adapterOrdinal=args.adapter_ordinal,
                     files={name: hashlib.sha256(data).hexdigest() for name, data in content.items()})
-    if mode == 'draw':
+    if mode != 'startup':
         manifest['creationFlags'] = args.creation_flags
         manifest['featureLevel'] = args.feature_level
         manifest['referenceDxbc'] = {stage: hashlib.sha256(path.read_bytes()).hexdigest()

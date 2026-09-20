@@ -33,7 +33,7 @@ function New-ValidationFixture($Job, $Session) {
         $selection = '--luid ' + $control.luidLow + ' ' + ([uint32]$control.luidHigh)
     }
     if ($baseline.executionContext -ceq 'Session0') { $selection += ' --session0' }
-    $unity = $Job.kind -ceq 'unity-startup' -or $Job.kind -cmatch '^unity-(recovered|regenerated|negative)-(on|off)-tier[0-2]-(traced|untraced)$'
+    $unity = $Job.kind -ceq 'unity-startup' -or $Job.kind -cmatch '^unity-(recovered|regenerated|negative)-(on|off)-tier[0-2]-(traced|untraced|unhooked)$'
     if (($Job.kind -cnotin @('device','reject-software','reject-other-gpu') -and -not $unity) -or $Job.durationMs -ne 0 -or
         $Job.jobId -cnotmatch '^[0-9a-f]{32}$') { throw 'unapproved_fixture' }
     $parent = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'D3D11Validation\data\native-jobs-v1'

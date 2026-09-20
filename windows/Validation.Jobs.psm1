@@ -1,6 +1,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'Validation.Protocol.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Validation.Archive.psm1')
 if (-not ('ValidationStore' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'Validation.Runtime.cs') }
 $script:root = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'D3D11Validation'
 $script:queue = Join-Path $script:root 'data\queue-v1'
@@ -67,6 +68,14 @@ function Invoke-ValidationOperation([string]$Operation, [string]$Text) {
         if ($Operation -ceq 'submit') {
             $inputHash = Get-ValidationDigest ([Text.Encoding]::UTF8.GetBytes($Text))
             $indexName = 'request-' + $request['nonce'] + '.json'
+            $archived = [ordered]@{}
+            if ($store.Exists('archived-requests.json')) {
+                $archived = ConvertFrom-ValidationArchive (Read-ValidationRecord $store 'archived-requests.json')
+            }
+            if ($archived.Contains($request['nonce'])) {
+                if ($archived[$request['nonce']] -cne $inputHash) { Stop-ValidationRequest 'nonce_conflict' }
+                Stop-ValidationRequest 'request_archived'
+            }
             if ($store.Exists($indexName)) {
                 $initial = Read-ValidationRecord $store $indexName
                 if ($initial.inputSha256 -cne $inputHash) { Stop-ValidationRequest 'nonce_conflict' }
@@ -74,6 +83,7 @@ function Invoke-ValidationOperation([string]$Operation, [string]$Text) {
             } else {
                 $null = Get-ValidationHeartbeat $store
                 if (@($store.Jobs()).Count -ge 128) { Stop-ValidationRequest 'job_quota_reached' }
+                if ($archived.Count + $store.RequestCount() -ge 10000) { Stop-ValidationRequest 'request_history_quota_reached' }
                 $now = [DateTime]::UtcNow.ToString('o')
                 $initial = [pscustomobject][ordered]@{
                     jobId = [Guid]::NewGuid().ToString('N'); capability = New-ValidationNonce

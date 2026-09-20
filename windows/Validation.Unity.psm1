@@ -5,8 +5,9 @@ Import-Module (Join-Path $PSScriptRoot 'Validation.Setup.psm1')
 Import-Module (Join-Path $PSScriptRoot 'Validation.Protocol.psm1')
 Import-Module (Join-Path $PSScriptRoot 'Validation.Graphics.psm1')
 
-function Get-ValidationUnityPackage([ValidateSet('startup','draw')][string]$Mode) {
-    $manifest = Get-Content -Raw (Join-Path $PSScriptRoot 'unity-package.json') | ConvertFrom-Json
+function Get-ValidationUnityPackage([ValidateSet('startup','draw','unhooked')][string]$Mode) {
+    $manifestName = if ($Mode -ceq 'unhooked') { 'unhooked-package.json' } else { 'unity-package.json' }
+    $manifest = Get-Content -Raw (Join-Path $PSScriptRoot $manifestName) | ConvertFrom-Json
     if ($manifest.schema -cne ('d3d11-unity-' + $Mode + '-package/v1') -or
         $manifest.deployment -cnotmatch ('^unity-' + $Mode + '-v[1-9][0-9]*$') -or
         $manifest.adapterOrdinal -isnot [int] -or $manifest.adapterOrdinal -lt 0 -or $manifest.adapterOrdinal -gt 63) {
@@ -41,13 +42,16 @@ function Get-ValidationUnityPackage([ValidateSet('startup','draw')][string]$Mode
     }
     # Startup uses no local proxy. Draw packages allow only the reviewed capture
     # DLL; its forwarding target is checked against the pinned system runtime.
-    $forbidden = if ($Mode -ceq 'startup') { '^(d3d11|dxgi|dxbc_d3d11_original)\.dll$' } else { '^(dxgi|dxbc_d3d11_original)\.dll$' }
+    $forbidden = if ($Mode -cne 'draw') { '^(d3d11|dxgi|dxbc_d3d11_original)\.dll$' } else { '^(dxgi|dxbc_d3d11_original)\.dll$' }
     if (@($actual | Where-Object { [IO.Path]::GetFileName($_) -imatch $forbidden }).Count) {
         throw 'unexpected_unity_runtime_wrapper'
     }
     $requiredFiles = @('RuntimeProbe.exe','UnityPlayer.dll','RuntimeProbe_Data/globalgamemanagers')
     if ($Mode -ceq 'startup') { $requiredFiles += 'fixture.bundle' }
-    else { $requiredFiles += @('d3d11.dll','recovered.bundle','regenerated.bundle','negative.bundle') }
+    else {
+        $requiredFiles += @('recovered.bundle','regenerated.bundle','negative.bundle')
+        $requiredFiles += $(if ($Mode -ceq 'draw') { 'd3d11.dll' } else { 'validation-observer.dll' })
+    }
     foreach ($required in $requiredFiles) {
         if ($required -cnotin $actual) { throw 'incomplete_unity_package' }
     }
@@ -55,17 +59,17 @@ function Get-ValidationUnityPackage([ValidateSet('startup','draw')][string]$Mode
 }
 
 function New-ValidationUnityFixture([string]$Output, $Guard, [string]$Kind) {
-    $mode = if ($Kind -ceq 'unity-startup') { 'startup' } else { 'draw' }
+    $mode = if ($Kind -ceq 'unity-startup') { 'startup' } elseif ($Kind.EndsWith('-unhooked')) { 'unhooked' } else { 'draw' }
     $profile = Get-ValidationUnityPackage $mode
     $package = $profile.directory
     $manifest = $profile.manifest
     $bundle = 'fixture.bundle'; $keyword = 'off'; $tier = '0'; $trace = ''
-    if ($mode -ceq 'draw') {
-        if ($Kind -cnotmatch '^unity-(recovered|regenerated|negative)-(on|off)-tier([0-2])-(traced|untraced)$') {
+    if ($mode -cne 'startup') {
+        if ($Kind -cnotmatch '^unity-(recovered|regenerated|negative)-(on|off)-tier([0-2])-(traced|untraced|unhooked)$') {
             throw 'invalid_unity_fixture'
         }
         $bundle = $Matches[1] + '.bundle'; $keyword = $Matches[2]; $tier = $Matches[3]
-        $trace = if ($Matches[4] -ceq 'traced') { ' -trace on' } else { ' -trace off' }
+        $trace = if ($Matches[4] -ceq 'traced') { ' -trace on' } elseif ($Matches[4] -ceq 'unhooked') { ' -trace none' } else { ' -trace off' }
     }
     $arguments = '-batchmode -force-d3d11 -force-gfx-direct -force-device-index ' + $manifest.adapterOrdinal +
         ' -bundle "' + (Join-Path $package $bundle) + '" -output "' + $Output +
@@ -119,11 +123,18 @@ function Get-ValidationUnityArtifact($Fixture, [string]$Name, [int]$Maximum) {
 function Complete-ValidationUnityDraw($Fixture) {
     $manifest = $Fixture.package.manifest
     $artifacts = [Collections.Generic.List[object]]::new()
-    foreach ($name in @('device.bin','draws.bin','result.tsv','pixels.bin')) {
+    $unhooked = $Fixture.kind.EndsWith('-unhooked')
+    if ($unhooked -and $Fixture.outputGuard.Exists('draws.bin')) { throw 'unexpected_unity_instrumentation' }
+    $names = @('device.bin','result.tsv','pixels.bin')
+    if (-not $unhooked) { $names += 'draws.bin' }
+    $byName = @{}
+    foreach ($name in $names) {
         $maximum = if ($name -ceq 'pixels.bin') { 256 } else { 262144 }
-        $artifacts.Add((Get-ValidationUnityArtifact $Fixture $name $maximum))
+        $artifact = Get-ValidationUnityArtifact $Fixture $name $maximum
+        $byName[$name] = $artifact
+        $artifacts.Add($artifact)
     }
-    $device = ConvertFrom-ValidationTabFields ([Convert]::FromBase64String($artifacts[0].base64)) 'runtime'
+    $device = ConvertFrom-ValidationTabFields ([Convert]::FromBase64String($byName['device.bin'].base64)) 'runtime'
     if ((Get-ValidationUnityField $device 'schema') -cne 'd3d11-unity-device/v1' -or
         $device.Count -ne 13 -or -not $device.ContainsKey('runtime') -or $device['runtime'].Count -ne 4) { throw 'invalid_unity_device' }
     $adapter = [ordered]@{name=Get-ValidationUnityField $device 'name'}
@@ -144,11 +155,11 @@ function Complete-ValidationUnityDraw($Fixture) {
     }
     $baseline = Get-Content -Raw (Join-Path $PSScriptRoot 'native-baseline.json') | ConvertFrom-Json
     $environment = Get-ValidationGraphicsEnvironment $report $baseline $manifest.creationFlags $manifest.featureLevel
-    $fields = ConvertFrom-ValidationTabFields ([Convert]::FromBase64String($artifacts[2].base64)) 'keyword_decl'
-    if ($Fixture.kind -cnotmatch '^unity-(recovered|regenerated|negative)-(on|off)-tier([0-2])-(traced|untraced)$') { throw 'invalid_unity_fixture' }
+    $fields = ConvertFrom-ValidationTabFields ([Convert]::FromBase64String($byName['result.tsv'].base64)) 'keyword_decl'
+    if ($Fixture.kind -cnotmatch '^unity-(recovered|regenerated|negative)-(on|off)-tier([0-2])-(traced|untraced|unhooked)$') { throw 'invalid_unity_fixture' }
     $bundle = $Matches[1] + '.bundle'; $keyword = $Matches[2]; $tier = $Matches[3]; $traced = $Matches[4] -ceq 'traced'
     $expectedFields = [ordered]@{
-        schema='dxbc-private-player-draw-domain/v1'; bundle_sha256=$manifest.files.$bundle
+        schema='dxbc-private-player-draw-domain/v2'; instrumentation=$(if ($unhooked) { 'none' } elseif ($traced) { 'on' } else { 'off' }); bundle_sha256=$manifest.files.$bundle
         player_metadata_sha256=$manifest.files.'RuntimeProbe_Data/globalgamemanagers'
         unity_version='2021.3.35f1'; backend='Direct3D11'; device=$baseline.adapter.name
         render_threading='Direct'; fog_enabled='False'; fog_mode='Linear'
@@ -157,14 +168,16 @@ function Complete-ValidationUnityDraw($Fixture) {
         uv_variant_enabled=$(if ($keyword -ceq 'on') { 'True' } else { 'False' })
         material_keyword_count='0'; mesh='canonical-quad-position-identity-v1'
         render_target='4x4-rgba32f-linear-depth24-msaa1'; pixel_bytes='256'
-        pixels_sha256=$artifacts[3].sha256; repeated_pixels_equal='True'; set_pass='True'; supported='True'
+        pixels_sha256=$byName['pixels.bin'].sha256; repeated_pixels_equal='True'; set_pass='True'; supported='True'
     }
     foreach ($field in $expectedFields.GetEnumerator()) {
         if ((Get-ValidationUnityField $fields $field.Key) -cne $field.Value) { throw 'unity_profile_drift' }
     }
-    if ($artifacts[3].byteLength -ne 256) { throw 'invalid_unity_pixels' }
-    $trace = [Text.UTF8Encoding]::new($false,$true).GetString([Convert]::FromBase64String($artifacts[1].base64))
-    $traceLengths = Assert-ValidationUnityTrace $trace $traced $report.featureLevel $report.creationFlags
+    if ($byName['pixels.bin'].byteLength -ne 256) { throw 'invalid_unity_pixels' }
+    if (-not $unhooked) {
+        $trace = [Text.UTF8Encoding]::new($false,$true).GetString([Convert]::FromBase64String($byName['draws.bin'].base64))
+        $traceLengths = Assert-ValidationUnityTrace $trace $traced $report.featureLevel $report.creationFlags
+    }
     $dxbcEqual = $null
     if ($traced) {
         $dxbcEqual = $true
@@ -183,8 +196,8 @@ function Complete-ValidationUnityDraw($Fixture) {
     return [ordered]@{
         artifacts=$artifacts; environment=$environment
         environmentSha256=Get-ValidationDigest ([Text.Encoding]::UTF8.GetBytes(($environment | ConvertTo-Json -Depth 10 -Compress)))
-        comparison=[ordered]@{case=$Fixture.kind; captureEnabled=$traced; profileMatched=$true
-            fullDxbcMatchesReference=$dxbcEqual; pixelsMatchReference=($artifacts[3].sha256 -ceq $manifest.referencePixels)
+        comparison=[ordered]@{case=$Fixture.kind; captureEnabled=$traced; drawHooksEnabled=(-not $unhooked); profileMatched=$true
+            fullDxbcMatchesReference=$dxbcEqual; pixelsMatchReference=($byName['pixels.bin'].sha256 -ceq $manifest.referencePixels)
             repeatedPixelsEqual=$true; fullQualificationComplete=$false}
     }
 }

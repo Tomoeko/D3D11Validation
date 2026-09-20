@@ -59,7 +59,8 @@ def verify(result, kind, policy_hash, policy, package, baseline):
     require(comparison['case'] == kind and comparison['profileMatched'] and
             comparison['repeatedPixelsEqual'], 'Profile or repeat mismatch')
     traced = kind.endswith('-traced')
-    require(comparison['captureEnabled'] == traced, 'Capture mode mismatch')
+    require(comparison['captureEnabled'] == traced and comparison['drawHooksEnabled'] ==
+            (not kind.endswith('-unhooked')), 'Instrumentation mode mismatch')
     require(len(files['pixels.bin']) == 256, 'Incomplete pixels')
     if traced:
         for stage in ('vs','ps'):
@@ -83,6 +84,12 @@ def main():
     package_bytes = args.policy.with_name('unity-package.json').read_bytes()
     require(digest(package_bytes) == policy['files']['unity-package.json'], 'Unpinned Unity package')
     package = json.loads(package_bytes)
+    unhooked_bytes = args.policy.with_name('unhooked-package.json').read_bytes()
+    require(digest(unhooked_bytes) == policy['files']['unhooked-package.json'], 'Unpinned unhooked package')
+    unhooked = json.loads(unhooked_bytes)
+    for name in ('RuntimeProbe.exe','UnityPlayer.dll','RuntimeProbe_Data/globalgamemanagers',
+                 'RuntimeProbe_Data/Managed/Assembly-CSharp.dll','recovered.bundle','regenerated.bundle','negative.bundle'):
+        require(package['files'][name] == unhooked['files'][name], 'Packages differ beyond instrumentation')
     baseline = json.loads(args.policy.with_name('native-baseline.json').read_text())
     campaign = dict(schema='d3d11-unity-worker-campaign/v1', deploymentSha256=policy_hash,
                     comparisonRule='bitwise-native-pairs-and-repeats', captureOffRetainsObservation=True,
@@ -94,7 +101,8 @@ def main():
         output = args.output.with_suffix('.case-' + str(len(campaign['results'])) + '.json')
         result = client.run_fixture(args.ssh_config,kind,policy_hash,output)
         campaign['results'].append(result); client.save(args.output,campaign)
-        files, env = verify(result,kind,policy_hash,policy,package,baseline)
+        selected = unhooked if kind.endswith('-unhooked') else package
+        files, env = verify(result,kind,policy_hash,policy,selected,baseline)
         if environment is None: environment = env
         require(environment == env, 'Environment changed within campaign')
         print('PASS execution:',kind,flush=True)
@@ -104,7 +112,7 @@ def main():
         for tier in range(3):
             pair = {}
             for bundle in ('recovered','regenerated'):
-                for capture in ('traced','untraced'):
+                for capture in ('traced','untraced','unhooked'):
                     kind = f'unity-{bundle}-{keyword}-tier{tier}-{capture}'
                     pair[bundle,capture] = run(kind)
                     files_by_case[kind] = pair[bundle,capture]
@@ -114,21 +122,22 @@ def main():
             for stage in ('vs','ps'):
                 name = f'draw-0001-{stage}.bin'
                 require(original[name] == pair['regenerated','traced'][name], 'Native DXBC differs between pair')
-            print(f'PASS bitwise pair and capture-off: {keyword} tier {tier}',flush=True)
+            print(f'PASS bitwise pair across all instrumentation modes: {keyword} tier {tier}',flush=True)
     for bundle in ('recovered','regenerated'):
         kind = f'unity-{bundle}-off-tier0-traced'
         repeated = run(kind)
         for name in ('pixels.bin','draw-0001-vs.bin','draw-0001-ps.bin'):
             require(repeated[name] == files_by_case[kind][name], 'Independent launch differs')
     original = files_by_case['unity-recovered-off-tier0-traced']
-    for capture in ('traced','untraced'):
+    for capture in ('traced','untraced','unhooked'):
         negative = run('unity-negative-off-tier0-' + capture)
         require(negative['pixels.bin'] != original['pixels.bin'], 'Wrong-sign pixel control was not detected')
         if capture == 'traced':
             require(negative['draw-0001-ps.bin'] != original['draw-0001-ps.bin'], 'Wrong-sign DXBC control was not detected')
+    campaign['unhookedComparisonPassed'] = True
     campaign['campaignAccepted'] = True
     client.save(args.output,campaign)
-    print('PASS: 12 native cases in two capture modes, independent repeat launches, and wrong-sign controls')
+    print('PASS: 12 native cases in three instrumentation modes, independent repeat launches, and wrong-sign controls')
 
 
 if __name__ == '__main__': main()

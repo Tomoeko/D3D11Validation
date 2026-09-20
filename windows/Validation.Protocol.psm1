@@ -65,7 +65,7 @@ function ConvertFrom-ValidationRequest([string]$Operation, [string]$Text) {
     if ($Operation -ceq 'submit') {
         # Fixture names select protected server policy; no executable, adapter,
         # or destination path is accepted from the client.
-        $unityDraw = $fields['kind'] -cmatch '^unity-(recovered|regenerated|negative)-(on|off)-tier[0-2]-(traced|untraced)$'
+        $unityDraw = $fields['kind'] -cmatch '^unity-(recovered|regenerated|negative)-(on|off)-tier[0-2]-(traced|untraced|unhooked)$'
         if (($fields['kind'] -cnotin @('diagnostic','device','reject-software','reject-other-gpu','reject-session','unity-startup') -and -not $unityDraw) -or $fields['durationMs'] -cnotmatch '^(0|[1-9][0-9]{0,3})$' -or
             [int]$fields['durationMs'] -gt 5000 -or ($fields['kind'] -cne 'diagnostic' -and $fields['durationMs'] -cne '0')) {
             Stop-ValidationRequest 'invalid_fixture'

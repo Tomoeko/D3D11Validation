@@ -79,10 +79,11 @@ class ResultBindingTests(unittest.TestCase):
                 with self.assertRaises(ValueError): self.request(response)
 
     def test_unity_artifact_sets(self):
-        for mode in ('traced','untraced'):
+        for mode in ('traced','untraced','unhooked'):
             self.job['submitRequest'] = {'kind':'unity-recovered-off-tier0-' + mode}
             response = copy.deepcopy(self.response)
-            names = ['device.bin','draws.bin','result.tsv','pixels.bin']
+            names = ['device.bin','result.tsv','pixels.bin']
+            if mode != 'unhooked': names.append('draws.bin')
             if mode == 'traced':
                 names += [f'draw-{draw:04d}-{stage}.bin' for draw in (1,2) for stage in ('vs','ps')]
             artifacts = [dict(name=name,byteLength=0,sha256=hashlib.sha256(b'').hexdigest(),base64='')

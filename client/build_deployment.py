@@ -15,6 +15,7 @@ WORKER_FILES = (
     'Get-ValidationSession.ps1', 'Invoke-ValidationJobGateway.ps1',
     'Start-ValidationWorker.ps1', 'Stop-ValidationWorker.ps1',
     'Validation.Setup.psm1', 'Validation.Unity.psm1', 'Validation.Graphics.psm1',
+    'Validation.Archive.psm1',
 )
 
 
@@ -31,7 +32,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--diagnostic', type=Path, required=True)
     parser.add_argument('--device-probe', type=Path)
-    parser.add_argument('--unity-package', type=Path, help='Reviewed private startup package manifest')
+    parser.add_argument('--unity-package', type=Path, help='Reviewed private Unity package manifest')
+    parser.add_argument('--unhooked-package', type=Path, help='Reviewed package without local D3D11 interception')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--deployment', required=True, help='Protected directory name, such as worker-v5')
     parser.add_argument('--context', choices=('Interactive','Session0'), default='Interactive')
@@ -54,6 +56,8 @@ def main():
         content['device-probe.exe'] = args.device_probe.read_bytes()
     if args.unity_package:
         content['unity-package.json'] = args.unity_package.read_bytes()
+    if args.unhooked_package:
+        content['unhooked-package.json'] = args.unhooked_package.read_bytes()
     hashes = {name:hashlib.sha256(data).hexdigest() for name,data in content.items()}
     policy = {
         'schema':'d3d11-worker-policy/v1',

@@ -112,6 +112,7 @@ public sealed class ValidationStore : IDisposable {
         else File.Move(temporary, destination);
     }
     public string[] Jobs() { return Directory.GetFiles(root, "job-*.json"); }
+    public int RequestCount() { return Directory.GetFiles(root, "request-*.json").Length; }
     public void Dispose() {
         if (gate != null) { gate.Dispose(); gate = null; }
         foreach (SafeFileHandle handle in directories) handle.Dispose();

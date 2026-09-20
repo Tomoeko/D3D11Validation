@@ -19,7 +19,7 @@ $unityKinds = @('unity-startup')
 foreach ($bundle in 'recovered','regenerated','negative') {
     foreach ($keyword in 'on','off') {
         foreach ($tier in 0,1,2) {
-            foreach ($capture in 'traced','untraced') { $unityKinds += "unity-$bundle-$keyword-tier$tier-$capture" }
+            foreach ($capture in 'traced','untraced','unhooked') { $unityKinds += "unity-$bundle-$keyword-tier$tier-$capture" }
         }
     }
 }
