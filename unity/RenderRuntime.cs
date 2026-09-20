@@ -20,6 +20,8 @@ public sealed class RenderRuntime : MonoBehaviour
     static uint interval;
     static bool unhooked;
     static string outputDirectory;
+    static SelectorObservation selector;
+    static List<string> selectorObservations;
 
     static string Argument(string name)
     {
@@ -85,6 +87,7 @@ public sealed class RenderRuntime : MonoBehaviour
             GL.Viewport(new Rect(0, 0, 4, 4));
             GL.Clear(true, true, Color.clear, 1);
             uint label = ++interval;
+            Record(selectorObservations, "selector_before_" + label, selector.Observe());
             if (!unhooked && TraceBegin(label) != 1)
                 throw new Exception("Trace interval unavailable");
             GL.PushMatrix();
@@ -107,6 +110,7 @@ public sealed class RenderRuntime : MonoBehaviour
             readback.Apply(false, false);
             if (!unhooked && TraceEnd(label) != 1)
                 throw new Exception("Trace interval incomplete");
+            Record(selectorObservations, "selector_after_" + label, selector.Observe());
             var bytes = readback.GetRawTextureData();
             if (bytes.Length != 256)
                 throw new Exception("Wrong readback length");
@@ -163,7 +167,12 @@ public sealed class RenderRuntime : MonoBehaviour
                 throw new Exception("Existing output");
             Directory.CreateDirectory(output);
             var report = new List<string>();
-            Record(report, "schema", "dxbc-private-player-draw-domain/v3");
+            selector = new SelectorObservation(Path.GetDirectoryName(Application.dataPath));
+            selectorObservations = new List<string>();
+            Record(report, "schema", "dxbc-private-player-draw-domain/v4");
+            Record(report, "selector_profile_sha256", selector.ProfileHash);
+            Record(report, "selector_image_sha256", selector.ImageHash);
+            Record(report, "selector_initial", selector.Observe());
             Record(report, "instrumentation", trace);
             Record(report, "bundle_sha256", Hash(File.ReadAllBytes(input)));
             Record(report, "player_metadata_sha256",
@@ -236,6 +245,7 @@ public sealed class RenderRuntime : MonoBehaviour
             mesh = Quad();
             var first = Capture(material, mesh);
             var second = Capture(material, mesh);
+            report.AddRange(selectorObservations);
             if (Hash(first) != Hash(second))
                 throw new Exception("Unstable repeated pixels");
             Record(report, "pixel_bytes", first.Length);

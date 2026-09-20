@@ -14,14 +14,15 @@ def main():
     parser.add_argument('--output',type=Path,required=True)
     args = parser.parse_args()
     if args.output.exists(): parser.error('Preserve existing compiled harnesses')
-    source = Path(__file__).resolve().parents[1]/'unity/RenderRuntime.cs'
+    source_root = Path(__file__).resolve().parents[1]/'unity'
+    sources = [source_root/'RenderRuntime.cs', source_root/'SelectorObservation.cs']
     references = sorted(p for p in args.managed_references.glob('*.dll') if p.name != 'Assembly-CSharp.dll')
     if not any(p.name == 'UnityEngine.CoreModule.dll' for p in references):
         parser.error('Selected private player core module is required')
     args.output.parent.mkdir(parents=True,exist_ok=True)
     command = [str(args.mono),str(args.compiler),'/nologo','/noconfig','/nostdlib+',
                '/target:library','/optimize+','/deterministic','/out:' + str(args.output)]
-    subprocess.run(command + ['/reference:' + str(p) for p in references] + [str(source)],check=True)
+    subprocess.run(command + ['/reference:' + str(p) for p in references] + [str(p) for p in sources],check=True)
     print('Harness SHA-256:',hashlib.sha256(args.output.read_bytes()).hexdigest())
 
 

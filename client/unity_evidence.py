@@ -66,6 +66,12 @@ def verify_player_record(data, kind, package, pixels):
         'pixel_bytes': str(len(pixels)), 'pixels_sha256': digest(pixels),
         'repeated_pixels_equal': 'True', 'set_pass': 'True',
     }
+    if 'selector-profile.bin' in package['files']:
+        expected.update(schema='dxbc-private-player-draw-domain/v4',
+                        selector_profile_sha256=package['files']['selector-profile.bin'],
+                        selector_image_sha256=package['files']['UnityPlayer.dll'])
+        for key in ('selector_initial', 'selector_before_1', 'selector_after_1', 'selector_before_2', 'selector_after_2'):
+            expected[key] = '0:0'
     for key, value in expected.items():
         require(fields.get(key) == value, 'Raw player observation mismatch: ' + key)
     require(set(fields) == set(expected) | {'harness_path', 'device', 'driver', 'asset', 'shader', 'pass_name'},
@@ -117,6 +123,11 @@ def verify(result, kind, policy_hash, policy, package, baseline):
     require(len(files['pixels.bin']) == 256, 'Incomplete pixels')
     observed = verify_player_record(files['result.tsv'], kind, package, files['pixels.bin'])
     require(observed['device'] == env['adapter']['name'], 'Raw device observation drift')
+    if 'selector-profile.bin' in package['files']:
+        require(env.get('selectorState') == dict(schema='d3d11-selector-state-observation/v1',
+            profileSha256=package['files']['selector-profile.bin'], imageSha256=package['files']['UnityPlayer.dll'],
+            sampleCount=5, registeredShaderExtensions=0, customShaderKeywords=0,
+            historyScope='fresh-process-before-load-and-two-direct-draws'), 'Selector observation drift')
     if traced:
         for stage in ('vs','ps'):
             first = files[f'draw-0001-{stage}.bin']

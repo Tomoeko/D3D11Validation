@@ -147,6 +147,34 @@ function Get-ValidationUnityImageIdentity($Package, [string]$Member, [string]$Ob
     return [ordered]@{file=$Member; sha256=$hash}
 }
 
+function Get-ValidationSelectorObservation($Fields, $Package) {
+    $name = 'selector-profile.bin'
+    $expectedHash = $Package.manifest.files.$name
+    if ($expectedHash -cnotmatch '^[0-9a-f]{64}$' -or
+        (Get-ValidationUnityField $Fields 'schema') -cne 'dxbc-private-player-draw-domain/v4' -or
+        (Get-ValidationUnityField $Fields 'selector_profile_sha256') -cne $expectedHash -or
+        (Get-ValidationUnityField $Fields 'selector_image_sha256') -cne $Package.manifest.files.'UnityPlayer.dll') {
+        throw 'selector_observation_authority_mismatch'
+    }
+    $path = Join-Path $Package.directory $name
+    if ((Get-Item -LiteralPath $path).Length -ne 72) { throw 'invalid_selector_profile' }
+    $bytes = [IO.File]::ReadAllBytes($path)
+    if ((Get-ValidationDigest $bytes) -cne $expectedHash -or
+        [Text.Encoding]::ASCII.GetString($bytes,0,8) -cne 'DVSEL001' -or
+        [BitConverter]::ToString($bytes,8,32).Replace('-','').ToLowerInvariant() -cne $Package.manifest.files.'UnityPlayer.dll') {
+        throw 'invalid_selector_profile'
+    }
+    foreach ($field in @('selector_initial','selector_before_1','selector_after_1','selector_before_2','selector_after_2')) {
+        if ((Get-ValidationUnityField $Fields $field) -cne '0:0') { throw 'shader_extensions_present_or_unobserved' }
+    }
+    return [ordered]@{
+        schema='d3d11-selector-state-observation/v1'; profileSha256=$expectedHash
+        imageSha256=$Package.manifest.files.'UnityPlayer.dll'; sampleCount=5
+        registeredShaderExtensions=0; customShaderKeywords=0
+        historyScope='fresh-process-before-load-and-two-direct-draws'
+    }
+}
+
 function Complete-ValidationUnityDraw($Fixture) {
     $manifest = $Fixture.package.manifest
     $artifacts = [Collections.Generic.List[object]]::new()
@@ -210,6 +238,10 @@ function Complete-ValidationUnityDraw($Fixture) {
         material_keyword_count='0'; mesh='canonical-quad-position-identity-v1'
         render_target='4x4-rgba32f-linear-depth24-msaa1'; pixel_bytes='256'
         pixels_sha256=$byName['pixels.bin'].sha256; repeated_pixels_equal='True'; set_pass='True'; supported='True'
+    }
+    if ($manifest.files.PSObject.Properties['selector-profile.bin']) {
+        $expectedFields.schema = 'dxbc-private-player-draw-domain/v4'
+        $environment.selectorState = Get-ValidationSelectorObservation $fields $Fixture.package
     }
     foreach ($field in $expectedFields.GetEnumerator()) {
         if ((Get-ValidationUnityField $fields $field.Key) -cne $field.Value) { throw 'unity_profile_drift' }

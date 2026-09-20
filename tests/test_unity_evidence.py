@@ -67,6 +67,21 @@ class PlayerRecordTests(unittest.TestCase):
             with self.subTest(record=text[-50:]), self.assertRaises(ValueError):
                 self.verify(text)
 
+    def test_selector_observations_require_every_bound_sample(self):
+        self.package['files'].update({'selector-profile.bin': 'd' * 64, 'UnityPlayer.dll': 'e' * 64})
+        text = self.record.replace('draw-domain/v3', 'draw-domain/v4')
+        text += 'selector_profile_sha256\t' + 'd' * 64 + '\nselector_image_sha256\t' + 'e' * 64 + '\n'
+        keys = ('selector_initial', 'selector_before_1', 'selector_after_1', 'selector_before_2', 'selector_after_2')
+        text += ''.join(key + '\t0:0\n' for key in keys)
+        self.verify(text)
+        for key in keys:
+            for value in ('1:0', '0:1', '00:0'):
+                with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                    self.verify(text.replace(key + '\t0:0', key + '\t' + value))
+            with self.assertRaises(ValueError): self.verify(text.replace(key + '\t0:0\n', ''))
+        with self.assertRaises(ValueError): self.verify(text.replace('d' * 64, 'f' * 64))
+        with self.assertRaises(ValueError): self.verify(text.replace('e' * 64, 'f' * 64))
+
 
 class AuthenticatedRetrievalTests(unittest.TestCase):
     def setUp(self):

@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import struct
 import zipfile
 
 EXCLUDED = {'d3d11.dll', 'dxgi.dll', 'dxbc_d3d11_original.dll', 'validation-observer.dll'}
@@ -17,6 +18,7 @@ def main():
     parser.add_argument('--trace-library', type=Path)
     parser.add_argument('--observer-library', type=Path)
     parser.add_argument('--managed-harness', type=Path)
+    parser.add_argument('--selector-profile', type=Path, help='Audited image-bound read-only counter profile for the selected harness')
     parser.add_argument('--regenerated-bundle', type=Path)
     parser.add_argument('--negative-bundle', type=Path)
     parser.add_argument('--creation-flags', type=int)
@@ -38,6 +40,8 @@ def main():
         parser.error('Draw packages require both other bundles and complete reference artifacts')
     if mode != 'startup' and (args.creation_flags is None or args.feature_level is None or not args.managed_harness):
         parser.error('Draw packages require a reviewed managed harness, native feature level and creation flags')
+    if mode != 'startup' and not args.selector_profile:
+        parser.error('Draw packages require an audited selector observation profile')
     if args.output.exists() or args.manifest.exists():
         parser.error('Preserve existing packages and manifests')
     content = {}
@@ -59,6 +63,16 @@ def main():
         content['regenerated.bundle'] = args.regenerated_bundle.read_bytes()
         content['negative.bundle'] = args.negative_bundle.read_bytes()
         content['RuntimeProbe_Data/Managed/Assembly-CSharp.dll'] = args.managed_harness.read_bytes()
+        profile = args.selector_profile.read_bytes()
+        if len(profile) != 72:
+            raise ValueError('Invalid selector profile length')
+        magic, image_hash, plugins_rva, plugins_offset, keywords_rva, keywords_offset = struct.unpack('<8s32s4Q', profile)
+        if (magic != b'DVSEL001' or image_hash.hex() != hashlib.sha256(content['UnityPlayer.dll']).hexdigest() or
+                any(not 4096 <= rva <= 2**32-9 or rva % 8 for rva in (plugins_rva, keywords_rva)) or
+                plugins_rva == keywords_rva or
+                any(not 8 <= offset <= 256 or offset % 8 for offset in (plugins_offset, keywords_offset))):
+            raise ValueError('Invalid or mismatched selector profile')
+        content['selector-profile.bin'] = profile
         if mode == 'draw': content['d3d11.dll'] = args.trace_library.read_bytes()
         else: content['validation-observer.dll'] = args.observer_library.read_bytes()
     required = {'RuntimeProbe.exe', 'UnityPlayer.dll', 'RuntimeProbe_Data/globalgamemanagers'}
