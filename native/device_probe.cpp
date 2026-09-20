@@ -170,7 +170,7 @@ int wmain(int argc, wchar_t** argv) {
         Com<IDXGIAdapter1> selected;
         DXGI_ADAPTER_DESC1 selected_desc{};
         std::ostringstream adapters;
-        adapters << "{\"schema\":\"d3d11-adapter-inventory/v1\",\"qualified\":false,\"adapters\":[";
+        adapters << "{\"schema\":\"d3d11-adapter-inventory/v2\",\"qualified\":false,\"adapters\":[";
         for (UINT index = 0;; ++index) {
             require(index < 64, "adapter enumeration limit");
             Com<IDXGIAdapter1> candidate;
@@ -182,9 +182,10 @@ int wmain(int argc, wchar_t** argv) {
             if (index) adapters << ',';
             adapters << "{\"ordinal\":" << index << ",\"name\":" << json_quote(description.Description)
                 << ",\"vendorId\":" << description.VendorId << ",\"deviceId\":" << description.DeviceId
+                << ",\"subsystemId\":" << description.SubSysId << ",\"revision\":" << description.Revision
                 << ",\"flags\":" << description.Flags << ",\"dedicatedVideoMemory\":" << description.DedicatedVideoMemory
                 << ",\"luidLow\":" << description.AdapterLuid.LowPart
-                << ",\"luidHigh\":" << description.AdapterLuid.HighPart << '}';
+                << ",\"luidHigh\":" << UINT(description.AdapterLuid.HighPart) << '}';
             const bool identity_matches = select_luid
                 ? description.AdapterLuid.LowPart == requested_luid.LowPart &&
                     description.AdapterLuid.HighPart == requested_luid.HighPart
@@ -261,7 +262,7 @@ int wmain(int argc, wchar_t** argv) {
             << ",\"adapter\":{\"ordinal\":" << selected_index << ",\"name\":" << json_quote(actual.Description) << ",\"vendorId\":" << actual.VendorId
             << ",\"deviceId\":" << actual.DeviceId << ",\"subsystemId\":" << actual.SubSysId
             << ",\"revision\":" << actual.Revision << ",\"luidLow\":" << actual.AdapterLuid.LowPart
-            << ",\"luidHigh\":" << actual.AdapterLuid.HighPart << ",\"software\":false},\"featureLevel\":" << unsigned(level)
+            << ",\"luidHigh\":" << UINT(actual.AdapterLuid.HighPart) << ",\"software\":false},\"featureLevel\":" << unsigned(level)
             << ",\"creationFlags\":" << device->GetCreationFlags() << ",\"format\":\"R32G32B32A32_FLOAT\","
             << "\"width\":4,\"height\":4,\"pixelBytes\":256,\"bitwiseReferenceMatch\":true,\"loadedModules\":"
             << loaded_modules() << "}\n";

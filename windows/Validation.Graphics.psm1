@@ -2,6 +2,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'Validation.Protocol.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Validation.Adapter.psm1')
 
 function Assert-ValidationRuntimeIdentity($Identity, $Pinned) {
     foreach ($field in @('file','version','sha256')) {
@@ -32,13 +33,11 @@ function Get-ValidationRuntimeIdentity([string]$Path, $Pinned) {
     return $identity
 }
 
-function Get-ValidationGraphicsEnvironment($Report, $Baseline, [int]$CreationFlags, [int]$FeatureLevel = $Baseline.featureLevel) {
+function Get-ValidationGraphicsEnvironment($Report, $Baseline, $Selection, [int]$CreationFlags, [int]$FeatureLevel = $Baseline.featureLevel) {
     $stateKey = [string]$report.connectionState
     if ($stateKey -cnotin @($baseline.sessionProtocolsByConnectionState.PSObject.Properties.Name) -or
         $report.executionContext -cne $baseline.executionContext) { throw 'unapproved_session_state' }
-    foreach ($field in $baseline.adapter.PSObject.Properties) {
-        if ($report.adapter.($field.Name) -cne $field.Value) { throw 'adapter_identity_drift' }
-    }
+    Assert-ValidationActualAdapter $Report.adapter $Selection.adapter
     if ([Environment]::OSVersion.Version.ToString() -cne $baseline.operatingSystem) { throw 'operating_system_drift' }
     if ($Report.adapter.software -or $Report.elevated -or
         $Report.featureLevel -ne $FeatureLevel -or $Report.creationFlags -ne $CreationFlags) {
@@ -54,13 +53,15 @@ function Get-ValidationGraphicsEnvironment($Report, $Baseline, [int]$CreationFla
         $identities.Add($identity)
     }
     $sessionAfter = & (Join-Path $PSScriptRoot 'Get-ValidationSession.ps1') -Context $baseline.executionContext | ConvertFrom-Json
-    if ($sessionAfter.processSessionId -ne $report.sessionId -or
+    if ($sessionAfter.bootUtc -cne $Selection.bootUtc -or
+        $sessionAfter.processSessionId -ne $report.sessionId -or
         $sessionAfter.clientProtocolType -ne $report.clientProtocolType -or
         $sessionAfter.connectionState -ne $report.connectionState -or
         $report.sessionId -ne $baseline.allowedSessionId -or
         $report.clientProtocolType -ne $baseline.sessionProtocolsByConnectionState.$stateKey) { throw 'session_drift' }
     $environment = [ordered]@{
-        adapter = $report.adapter; featureLevel = $report.featureLevel; creationFlags = $report.creationFlags
+        adapter = $report.adapter; adapterSelection = $Selection; bootUtc = $Selection.bootUtc
+        featureLevel = $report.featureLevel; creationFlags = $report.creationFlags
         runtimeIdentities = $identities; operatingSystem = [Environment]::OSVersion.Version.ToString()
         processSessionId = $report.sessionId; clientProtocolType = $report.clientProtocolType
         executionContext = $report.executionContext

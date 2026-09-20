@@ -7,7 +7,8 @@ import importlib.util
 import json
 from pathlib import Path
 import struct
-import time
+
+from adapter_evidence import verify_selection
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('client', ROOT/'client/validation_client.py')
@@ -15,22 +16,21 @@ client = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(client)
 
 
-def verify(result, kind, policy_hash, binary_hash, baseline, session_state):
+def verify(result, kind, policy_hash, policy, baseline, session_state):
     assert result['deploymentSha256'] == policy_hash
     record = result['result']
-    assert record['binarySha256'] == binary_hash and record['failureCode'] is None
+    assert record['binarySha256'] == policy['files']['device-probe.exe'] and record['failureCode'] is None
     fixture = record['fixture']
     files = {item['name']:base64.b64decode(item['base64'],validate=True) for item in fixture['artifacts']}
     if kind != 'device':
         assert result['state'] == 'failed' and result['exitCode'] == 1
-        assert set(files) == {'adapters.json'} and fixture['environment'] is None
+        assert set(files) == {'adapters.json','selection-adapters.json'} and fixture['environment'] is None
         return
     assert result['state'] == 'completed' and result['exitCode'] == 0
     assert files['pixels.bin'] == struct.pack('<4f',.25,.5,.75,1) * 16
     report = json.loads(files['report.json'])
     env = fixture['environment']
-    expected_adapter = dict(baseline['adapter'],ordinal=report['adapter']['ordinal'])
-    assert env['adapter'] == expected_adapter, 'Adapter identity drift'
+    verify_selection(record, files, baseline, policy)
     for key in ('featureLevel','creationFlags','operatingSystem'):
         assert env[key] == baseline[key], 'Environment drift: ' + key
     assert len(env['runtimeIdentities']) == len(baseline['runtimeIdentities'])
@@ -68,24 +68,12 @@ def main():
     results = []
     kinds = ['device','device'] + ([] if args.positive_only else ['reject-software','reject-other-gpu'])
     for kind in kinds:
-        job = client.submit(args.ssh_config,kind=kind)
-        client.save(args.output.with_suffix('.job-' + str(len(results)) + '.json'), job)
-        started = client.operate(args.ssh_config,'start',job)
-        job['executionNonce'] = started['executionNonce']
-        client.save(args.output.with_suffix('.job-' + str(len(results)) + '.json'), job)
-        deadline = time.monotonic()+30
-        while True:
-            status = client.operate(args.ssh_config,'status',job)
-            if status.get('recoveryRequired'): raise RuntimeError('Worker unavailable; preserve this job for recovery')
-            state = status['state']
-            if state in ('completed','failed','cancelled','timed_out','stale'): break
-            if time.monotonic()>deadline: raise TimeoutError('Native fixture did not finish')
-            time.sleep(.1)
-        result = client.operate(args.ssh_config,'results',job)
+        case_output = args.output.with_suffix('.case-' + str(len(results)) + '.json')
+        result = client.run_fixture(args.ssh_config, kind, policy_hash, case_output, timeout=30)
         results.append(result)
         client.save(args.output,{'schema':'d3d11-native-worker-campaign/v1','sessionState':args.session_state,
                     'deploymentSha256':policy_hash,'results':results,'campaignAccepted':False,'fullQualificationComplete':False})
-        verify(result,kind,policy_hash,policy['files']['device-probe.exe'],baseline,args.session_state)
+        verify(result,kind,policy_hash,policy,baseline,args.session_state)
         print('PASS:',kind,flush=True)
     assert results[0]['result']['fixture']['environmentSha256'] == results[1]['result']['fixture']['environmentSha256']
     client.save(args.output,{'schema':'d3d11-native-worker-campaign/v1','sessionState':args.session_state,

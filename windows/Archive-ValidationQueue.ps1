@@ -1,23 +1,26 @@
-# Operator maintenance; never callable through the SSH gateway.
+# Operator maintenance. Headless bootstrap invokes this trusted copy only while
+# holding the exclusive activation guard and after disabling/stopping the worker.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidatePattern('^worker-v[1-9][0-9]*$')][string]$Deployment,
     [Parameter(Mandatory)][ValidatePattern('^queue-archive-v[1-9][0-9]*$')][string]$ArchiveName,
-    [ValidatePattern('^queue-archive-v[1-9][0-9]*$')][string]$ImportArchive
+    [ValidatePattern('^queue-archive-v[1-9][0-9]*$')][string]$ImportArchive,
+    [switch]$Headless
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $root = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'D3D11Validation'
 $program = Join-Path ($root + '/program') $Deployment
-Import-Module (Join-Path $program 'Validation.Setup.psm1')
-Import-Module (Join-Path $program 'Validation.Archive.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Validation.Setup.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Validation.Archive.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Validation.Submission.psm1')
 Assert-ProtectedPath $root
 Assert-ProtectedPath ($root + '/program')
 Assert-ProtectedPath $program
 $administrator = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $administrator.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Elevated operator required.' }
 $task = Get-ScheduledTask -TaskName 'D3D11Validation-Worker'
-if ($task.Settings.Enabled -or $task.State -eq 'Running' -or (Get-Service sshd).Status -ne 'Stopped') {
+if ($task.Settings.Enabled -or $task.State -eq 'Running' -or (-not $Headless -and (Get-Service sshd).Status -ne 'Stopped')) {
     throw 'Disable the owned task and stop validation SSH before archiving.'
 }
 # Disabled state can be reported before Task Scheduler has terminated its process.
@@ -39,9 +42,10 @@ $queue = Join-Path ($root + '/data') 'queue-v1'
 $archive = Join-Path ($root + '/data') $ArchiveName
 $replacement = Join-Path ($root + '/data') ($ArchiveName + '-replacement')
 if ((Test-Path $archive) -or (Test-Path $replacement)) { throw 'Preserve an existing archive or interrupted maintenance.' }
-if (-not ('ValidationStore' -as [type])) { Add-Type -Path (Join-Path $program 'Validation.Runtime.cs') }
+if (-not ('ValidationStore' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'Validation.Runtime.cs') }
 $store = [ValidationStore]::new($queue)
 function Add-RequestRecord($Requests, [string]$Name, $Record) {
+    if ($Record.PSObject.Properties['schema']) { $Record = Get-ValidationSubmissionInitial $Record }
     $nonce = $Name.Substring(8,64)
     if ($Record.requestNonce -cne $nonce) { throw 'archive_request_identity_mismatch' }
     $sha = [Security.Cryptography.SHA256]::Create()

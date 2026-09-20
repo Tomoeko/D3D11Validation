@@ -80,11 +80,11 @@ def operate(config, operation, job):
     if operation == 'results' and response.get('state') == 'completed' and (expected_kind == 'device' or unity) and not fixture:
         raise ValueError('Missing native preflight evidence')
     if fixture:
-        expected_names = {'adapters.json','report.json','pixels.bin'}
+        expected_names = {'adapters.json','report.json','pixels.bin','selection-adapters.json'}
         if unity:
             expected_names = {'unity-startup.json'}
             if expected_kind != 'unity-startup' and response['state'] == 'completed':
-                expected_names = {'device.bin','result.tsv','pixels.bin'}
+                expected_names = {'device.bin','result.tsv','pixels.bin','selection-adapters.json'}
                 if not expected_kind.endswith('-unhooked'): expected_names.add('draws.bin')
                 if expected_kind.endswith('-traced'):
                     expected_names |= {f'draw-{draw:04d}-{stage}.bin' for draw in (1,2) for stage in ('vs','ps')}

@@ -85,27 +85,39 @@ void validation_observe_device(ID3D11Device *device, const wchar_t *output_direc
     char utf8[4096];
     DWORD session;
     if (!ProcessIdToSessionId(GetCurrentProcessId(), &session) || session != 0) ExitProcess(94);
-    validation_record(file, "schema\td3d11-unity-device/v1\nname\t%s\n", field_utf8(desc.Description, utf8, sizeof(utf8)));
+    validation_record(file, "schema\td3d11-unity-device/v2\nname\t%s\n", field_utf8(desc.Description, utf8, sizeof(utf8)));
     validation_record(file, "vendorId\t%u\ndeviceId\t%u\nsubsystemId\t%u\nrevision\t%u\n", desc.VendorId, desc.DeviceId, desc.SubSysId, desc.Revision);
     validation_record(file, "luidLow\t%lu\nluidHigh\t%lu\nsoftware\t0\nsessionId\t%lu\n", desc.AdapterLuid.LowPart, (ULONG)desc.AdapterLuid.HighPart, session);
     validation_record(file, "featureLevel\t%u\ncreationFlags\t%u\n", (unsigned)ID3D11Device_GetFeatureLevel(device), ID3D11Device_GetCreationFlags(device));
     HMODULE modules[1024];
     DWORD bytes;
     if (!EnumProcessModules(GetCurrentProcess(), modules, sizeof(modules), &bytes) || bytes > sizeof(modules)) ExitProcess(94);
-    unsigned count = 0;
+    unsigned count = 0, player_images = 0;
+    HMODULE executable = GetModuleHandleW(NULL);
+    if (!executable) ExitProcess(94);
     for (DWORD i = 0; i < bytes / sizeof(HMODULE); ++i) {
         DWORD length = GetModuleFileNameW(modules[i], path, 4096);
         if (!length || length >= 4096) ExitProcess(94);
         const wchar_t *name = wcsrchr(path, L'\\');
         if (!name) ExitProcess(94);
         ++name;
+        const char *image_key = NULL;
+        unsigned image_bit = 0;
+        if (modules[i] == executable) { image_key = "processImage"; image_bit = 1; }
+        else if (!_wcsicmp(name, L"UnityPlayer.dll")) { image_key = "playerImage"; image_bit = 2; }
+        else if (!_wcsicmp(name, L"mono-2.0-bdwgc.dll")) { image_key = "monoImage"; image_bit = 4; }
+        if (image_key) {
+            if (player_images & image_bit) ExitProcess(94);
+            player_images |= image_bit;
+            validation_record(file, "%s\t%s\n", image_key, field_utf8(path, utf8, sizeof(utf8)));
+        }
         if (modules[i] == original || !_wcsicmp(name, L"dxgi.dll") ||
             !_wcsicmp(name, L"nvldumdx.dll") || !_wcsicmp(name, L"nvwgf2umx.dll")) {
             validation_record(file, "runtime\t%s\n", field_utf8(path, utf8, sizeof(utf8)));
             ++count;
         }
     }
-    if (count != 4 || !FlushFileBuffers(file) || !CloseHandle(file)) ExitProcess(94);
+    if (count != 4 || player_images != 7 || !FlushFileBuffers(file) || !CloseHandle(file)) ExitProcess(94);
     IDXGIAdapter1_Release(adapter1);
     IDXGIAdapter_Release(adapter);
     IDXGIDevice_Release(dxgi_device);

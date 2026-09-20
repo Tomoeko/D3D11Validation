@@ -2,7 +2,7 @@
 """Serve one reviewed archive over TLS to the selected private Windows peer.
 
 This is an operator deployment channel, separate from the job submission API.
-The operator pins the archive SHA-256 and certificate through trusted RDP.
+The operator or signed maintenance request pins the archive and TLS certificate.
 No directory listing, upload, command execution, or global trust-store change.
 """
 
@@ -93,6 +93,10 @@ def main():
                     "url": f"https://{server_name}:{server.server_port}{request_path}",
                     "curlResolve": f"{server_name}:{server.server_port}:{bind}",
                     "archiveSha256": digest,
+                    "archiveBytes": len(content),
+                    "ticket": request_path.split("/")[1],
+                    "port": server.server_port,
+                    "certificateSha256": hashlib.sha256(ssl.PEM_cert_to_DER_cert(certificate.read_text())).hexdigest(),
                     "certificateBase64": base64.b64encode(certificate.read_bytes()).decode(),
                     "expiresAfterSeconds": 300,
                 }), flush=True)

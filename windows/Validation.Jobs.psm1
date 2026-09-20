@@ -2,6 +2,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'Validation.Protocol.psm1')
 Import-Module (Join-Path $PSScriptRoot 'Validation.Archive.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Validation.Submission.psm1')
 if (-not ('ValidationStore' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'Validation.Runtime.cs') }
 $script:root = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'D3D11Validation'
 $script:queue = Join-Path $script:root 'data\queue-v1'
@@ -36,6 +37,12 @@ function Get-ValidationJob($Store, $Request) {
     $job = Read-ValidationRecord $Store $name
     if ($job.capability -cne $Request['capability']) { Stop-ValidationRequest 'job_unavailable' }
     if ($job.deploymentSha256 -cne $script:deploymentHash) { Stop-ValidationRequest 'stale_deployment' }
+    $indexName = 'request-' + $job.requestNonce + '.json'
+    if (-not $Store.Exists($indexName)) { Stop-ValidationRequest 'submission_history_incomplete' }
+    $index = Read-ValidationRecord $Store $indexName
+    if ((Get-ValidationPublicationAction $index $job) -cne 'reuse') {
+        Stop-ValidationRequest 'submission_not_published'
+    }
     return $job
 }
 function Get-ValidationJobSummary($Job, [string]$Nonce) {
@@ -55,6 +62,7 @@ function New-ValidationJobResult($Job, $Execution, $FixtureEvidence, [string]$Fa
         sourceRevision = $script:policy.sourceRevision; sourceState = $script:policy.sourceState
         binarySha256 = $Execution.binarySha256; fixture = $FixtureEvidence
         failureCode = $(if ($FailureCode) { $FailureCode } else { $null })
+        failureDiagnostic = $(if ($Execution.PSObject.Properties['failureDiagnostic']) { $Execution.failureDiagnostic } else { $null })
         workerEpoch = $Job.workerEpoch; session = $Execution.session
         durationMs = $Job.durationMs; elapsedMs = $Execution.timer.ElapsedMilliseconds
         childPid = $Execution.childPid; completion = $Job.state
@@ -77,13 +85,20 @@ function Invoke-ValidationOperation([string]$Operation, [string]$Text) {
                 Stop-ValidationRequest 'request_archived'
             }
             if ($store.Exists($indexName)) {
-                $initial = Read-ValidationRecord $store $indexName
+                $index = Read-ValidationRecord $store $indexName
+                $initial = Get-ValidationSubmissionInitial $index
                 if ($initial.inputSha256 -cne $inputHash) { Stop-ValidationRequest 'nonce_conflict' }
                 if ($initial.deploymentSha256 -cne $script:deploymentHash) { Stop-ValidationRequest 'stale_deployment' }
             } else {
                 $null = Get-ValidationHeartbeat $store
                 if (@($store.Jobs()).Count -ge 128) { Stop-ValidationRequest 'job_quota_reached' }
                 if ($archived.Count + $store.RequestCount() -ge 10000) { Stop-ValidationRequest 'request_history_quota_reached' }
+                # A missing nonce index must not allocate a second job for a
+                # submission whose mutable record still exists.
+                foreach ($path in $store.Jobs()) {
+                    $existing = Read-ValidationRecord $store ([IO.Path]::GetFileName($path))
+                    if ($existing.requestNonce -ceq $request['nonce']) { Stop-ValidationRequest 'submission_history_incomplete' }
+                }
                 $now = [DateTime]::UtcNow.ToString('o')
                 $initial = [pscustomobject][ordered]@{
                     jobId = [Guid]::NewGuid().ToString('N'); capability = New-ValidationNonce
@@ -93,13 +108,22 @@ function Invoke-ValidationOperation([string]$Operation, [string]$Text) {
                     createdUtc = $now; updatedUtc = $now; workerEpoch = ''; executionNonce = ''
                     cancelRequested = $false; exitCode = $null; result = $null
                 }
-                # The immutable nonce record precedes mutable state. A lost connection
-                # between these writes can reconstruct only the initial job, never replay it.
-                Write-ValidationRecord $store $indexName $initial
+                $index = [pscustomobject][ordered]@{
+                    schema='d3d11-submission-index/v1'; phase='prepared'; initial=$initial
+                }
+                Write-ValidationRecord $store $indexName $index
             }
             $name = 'job-' + $initial.jobId + '.json'
-            if (-not $store.Exists($name)) { Write-ValidationRecord $store $name $initial }
-            $job = Read-ValidationRecord $store $name
+            $job = if ($store.Exists($name)) { Read-ValidationRecord $store $name } else { $null }
+            $action = Get-ValidationPublicationAction $index $job
+            if ($action -ceq 'create') {
+                Write-ValidationRecord $store $name $initial
+                $job = $initial
+            }
+            if ($index.phase -ceq 'prepared') {
+                $index.phase = 'published'
+                Write-ValidationRecord $store $indexName $index
+            }
             $response = Get-ValidationJobSummary $job $request['nonce']
             $response['capability'] = $job.capability
             return $response

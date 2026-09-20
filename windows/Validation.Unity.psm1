@@ -8,9 +8,9 @@ Import-Module (Join-Path $PSScriptRoot 'Validation.Graphics.psm1')
 function Get-ValidationUnityPackage([ValidateSet('startup','draw','unhooked')][string]$Mode) {
     $manifestName = if ($Mode -ceq 'unhooked') { 'unhooked-package.json' } else { 'unity-package.json' }
     $manifest = Get-Content -Raw (Join-Path $PSScriptRoot $manifestName) | ConvertFrom-Json
-    if ($manifest.schema -cne ('d3d11-unity-' + $Mode + '-package/v1') -or
+    if ($manifest.schema -cne ('d3d11-unity-' + $Mode + '-package/v2') -or
         $manifest.deployment -cnotmatch ('^unity-' + $Mode + '-v[1-9][0-9]*$') -or
-        $manifest.adapterOrdinal -isnot [int] -or $manifest.adapterOrdinal -lt 0 -or $manifest.adapterOrdinal -gt 63) {
+        $manifest.adapterSelection -cne 'unique-current-inventory' -or $manifest.PSObject.Properties['adapterOrdinal']) {
         throw 'invalid_unity_package'
     }
     $root = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'D3D11Validation'
@@ -58,7 +58,7 @@ function Get-ValidationUnityPackage([ValidateSet('startup','draw','unhooked')][s
     return [pscustomobject]@{directory=$package; manifest=$manifest}
 }
 
-function New-ValidationUnityFixture([string]$Output, $Guard, [string]$Kind) {
+function New-ValidationUnityFixture([string]$Output, $Guard, [string]$Kind, $Selection) {
     $mode = if ($Kind -ceq 'unity-startup') { 'startup' } elseif ($Kind.EndsWith('-unhooked')) { 'unhooked' } else { 'draw' }
     $profile = Get-ValidationUnityPackage $mode
     $package = $profile.directory
@@ -71,12 +71,12 @@ function New-ValidationUnityFixture([string]$Output, $Guard, [string]$Kind) {
         $bundle = $Matches[1] + '.bundle'; $keyword = $Matches[2]; $tier = $Matches[3]
         $trace = if ($Matches[4] -ceq 'traced') { ' -trace on' } elseif ($Matches[4] -ceq 'unhooked') { ' -trace none' } else { ' -trace off' }
     }
-    $arguments = '-batchmode -force-d3d11 -force-gfx-direct -force-device-index ' + $manifest.adapterOrdinal +
+    $arguments = '-batchmode -force-d3d11 -force-gfx-direct -force-device-index ' + $Selection.adapter.ordinal +
         ' -bundle "' + (Join-Path $package $bundle) + '" -output "' + $Output +
         '" -uv-variant ' + $keyword + ' -tier ' + $tier + $trace + ' -logFile "' + (Join-Path $Output 'unity-log.bin') + '"'
     return [pscustomobject]@{
         executable = Join-Path $package 'RuntimeProbe.exe'
-        kind = $Kind; package = $profile
+        kind = $Kind; package = $profile; selection = $Selection
         binarySha256 = $manifest.files.'RuntimeProbe.exe'; workingDirectory = $package
         arguments = $arguments; timeoutMs = 60000; outputGuard = $Guard; outputDirectory = $Output
     }
@@ -120,12 +120,39 @@ function Get-ValidationUnityArtifact($Fixture, [string]$Name, [int]$Maximum) {
         sha256=Get-ValidationDigest $bytes; base64=[Convert]::ToBase64String($bytes)}
 }
 
+# Resolve only the exact package member before doing any I/O on an observed
+# process path. A same-name image outside the protected package is not authority.
+function Assert-ValidationPackageImagePath([string]$Root, [string]$Member, [string]$Observed) {
+    if (-not [IO.Path]::IsPathRooted($Root) -or -not [IO.Path]::IsPathRooted($Observed) -or
+        $Member -cnotmatch '^[A-Za-z0-9_-][A-Za-z0-9_. /-]*$' -or
+        @($Member.Split('/') | Where-Object { $_ -in @('','.', '..') -or $_.EndsWith('.') -or $_.EndsWith(' ') }).Count) {
+        throw 'invalid_loaded_image_path'
+    }
+    $expected = [IO.Path]::GetFullPath((Join-Path $Root $Member))
+    $actual = [IO.Path]::GetFullPath($Observed)
+    if (-not [string]::Equals($Observed,$actual,[StringComparison]::OrdinalIgnoreCase) -or
+        -not [string]::Equals($expected,$actual,[StringComparison]::OrdinalIgnoreCase)) {
+        throw 'loaded_image_outside_package'
+    }
+    return $expected
+}
+
+function Get-ValidationUnityImageIdentity($Package, [string]$Member, [string]$Observed) {
+    $expected = Assert-ValidationPackageImagePath $Package.directory $Member $Observed
+    $pin = @($Package.manifest.files.PSObject.Properties | Where-Object { $_.Name -ceq $Member })
+    if ($pin.Count -ne 1 -or $pin[0].Value -cnotmatch '^[0-9a-f]{64}$') { throw 'unapproved_loaded_image' }
+    Assert-ProtectedPath $expected
+    $hash = (Get-FileHash -LiteralPath $expected).Hash.ToLowerInvariant()
+    if ($hash -cne $pin[0].Value) { throw 'loaded_image_hash_drift' }
+    return [ordered]@{file=$Member; sha256=$hash}
+}
+
 function Complete-ValidationUnityDraw($Fixture) {
     $manifest = $Fixture.package.manifest
     $artifacts = [Collections.Generic.List[object]]::new()
     $unhooked = $Fixture.kind.EndsWith('-unhooked')
     if ($unhooked -and $Fixture.outputGuard.Exists('draws.bin')) { throw 'unexpected_unity_instrumentation' }
-    $names = @('device.bin','result.tsv','pixels.bin')
+    $names = @('device.bin','result.tsv','pixels.bin','selection-adapters.json')
     if (-not $unhooked) { $names += 'draws.bin' }
     $byName = @{}
     foreach ($name in $names) {
@@ -135,8 +162,8 @@ function Complete-ValidationUnityDraw($Fixture) {
         $artifacts.Add($artifact)
     }
     $device = ConvertFrom-ValidationTabFields ([Convert]::FromBase64String($byName['device.bin'].base64)) 'runtime'
-    if ((Get-ValidationUnityField $device 'schema') -cne 'd3d11-unity-device/v1' -or
-        $device.Count -ne 13 -or -not $device.ContainsKey('runtime') -or $device['runtime'].Count -ne 4) { throw 'invalid_unity_device' }
+    if ((Get-ValidationUnityField $device 'schema') -cne 'd3d11-unity-device/v2' -or
+        $device.Count -ne 16 -or -not $device.ContainsKey('runtime') -or $device['runtime'].Count -ne 4) { throw 'invalid_unity_device' }
     $adapter = [ordered]@{name=Get-ValidationUnityField $device 'name'}
     foreach ($field in @('vendorId','deviceId','subsystemId','revision','luidLow','luidHigh')) {
         $value = Get-ValidationUnityField $device $field
@@ -154,12 +181,26 @@ function Complete-ValidationUnityDraw($Fixture) {
         creationFlags=[uint32](Get-ValidationUnityField $device 'creationFlags')
     }
     $baseline = Get-Content -Raw (Join-Path $PSScriptRoot 'native-baseline.json') | ConvertFrom-Json
-    $environment = Get-ValidationGraphicsEnvironment $report $baseline $manifest.creationFlags $manifest.featureLevel
+    $environment = Get-ValidationGraphicsEnvironment $report $baseline $Fixture.selection $manifest.creationFlags $manifest.featureLevel
     $fields = ConvertFrom-ValidationTabFields ([Convert]::FromBase64String($byName['result.tsv'].base64)) 'keyword_decl'
+    $images = [Collections.Generic.List[object]]::new()
+    foreach ($role in @(
+        @('processImage','RuntimeProbe.exe'),
+        @('playerImage','UnityPlayer.dll'),
+        @('monoImage','MonoBleedingEdge/EmbedRuntime/mono-2.0-bdwgc.dll')
+    )) {
+        $images.Add((Get-ValidationUnityImageIdentity $Fixture.package $role[1] (Get-ValidationUnityField $device $role[0])))
+    }
+    $harness = Get-ValidationUnityImageIdentity $Fixture.package 'RuntimeProbe_Data/Managed/Assembly-CSharp.dll' (Get-ValidationUnityField $fields 'harness_path')
+    if ((Get-ValidationUnityField $fields 'harness_sha256') -cne $harness.sha256) { throw 'loaded_harness_drift' }
+    $images.Add($harness)
+    $environment.playerImages = $images.ToArray()
+    # These selected engine/harness roles are not the complete loaded-module set.
+    $environment.loadedImageClosureComplete = $false
     if ($Fixture.kind -cnotmatch '^unity-(recovered|regenerated|negative)-(on|off)-tier([0-2])-(traced|untraced|unhooked)$') { throw 'invalid_unity_fixture' }
     $bundle = $Matches[1] + '.bundle'; $keyword = $Matches[2]; $tier = $Matches[3]; $traced = $Matches[4] -ceq 'traced'
     $expectedFields = [ordered]@{
-        schema='dxbc-private-player-draw-domain/v2'; instrumentation=$(if ($unhooked) { 'none' } elseif ($traced) { 'on' } else { 'off' }); bundle_sha256=$manifest.files.$bundle
+        schema='dxbc-private-player-draw-domain/v3'; instrumentation=$(if ($unhooked) { 'none' } elseif ($traced) { 'on' } else { 'off' }); bundle_sha256=$manifest.files.$bundle
         player_metadata_sha256=$manifest.files.'RuntimeProbe_Data/globalgamemanagers'
         unity_version='2021.3.35f1'; backend='Direct3D11'; device=$baseline.adapter.name
         render_threading='Direct'; fog_enabled='False'; fog_mode='Linear'
@@ -261,4 +302,4 @@ function Complete-ValidationUnityFixture($Fixture, [string]$State) {
     }
 }
 
-Export-ModuleMember -Function New-ValidationUnityFixture, Complete-ValidationUnityFixture, Get-ValidationUnityStartupSummary, ConvertFrom-ValidationTabFields, Assert-ValidationUnityTrace
+Export-ModuleMember -Function New-ValidationUnityFixture, Complete-ValidationUnityFixture, Get-ValidationUnityStartupSummary, ConvertFrom-ValidationTabFields, Assert-ValidationUnityTrace, Assert-ValidationPackageImagePath

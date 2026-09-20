@@ -67,7 +67,7 @@ try {
                     $job.state = 'running'; $job.updatedUtc = $now
                     Write-ValidationRecord $store $name $job
                     $timer = [Diagnostics.Stopwatch]::StartNew()
-                    $execution = [pscustomobject]@{timer=$timer; session=$null; binarySha256=$null; childPid=$null}
+                    $execution = [pscustomobject]@{timer=$timer; session=$null; binarySha256=$null; childPid=$null; failureDiagnostic=$null}
                     try {
                         $execution.session = & (Join-Path $PSScriptRoot 'Get-ValidationSession.ps1') -Context $policy.executionContext | ConvertFrom-Json
                         $fixture = New-ValidationFixture $job $execution.session
@@ -82,7 +82,15 @@ try {
                     } catch {
                         if ($null -ne $child) { $child.Dispose(); $child = $null }
                         if ($null -ne $fixture -and $null -ne $fixture.outputGuard) { $fixture.outputGuard.Dispose() }
-                        $code = 'fixture_start_failed'
+                        # Bounded source coordinates and error category identify a
+                        # failed preflight without exporting exception messages/paths.
+                        $errorId = ($_.FullyQualifiedErrorId -split ',')[0]
+                        if ($errorId -cnotmatch '^[A-Za-z0-9_.]{1,80}$') { $errorId = 'unclassified' }
+                        $source = [IO.Path]::GetFileName($_.InvocationInfo.ScriptName)
+                        if ($source -cnotin @($policy.files.PSObject.Properties.Name)) { $source = 'unknown' }
+                        $execution.failureDiagnostic = [ordered]@{source=$source; line=$_.InvocationInfo.ScriptLineNumber; errorId=$errorId}
+                        $code = Get-ValidationFixtureFailureCode $_
+                        if ($code -ceq 'fixture_validation_failed') { $code = 'fixture_start_failed' }
                         if ($_.Exception.Data['validationCode'] -ceq 'unapproved_session') { $code = 'unapproved_session' }
                         $job.state = 'failed'; $job.updatedUtc = [DateTime]::UtcNow.ToString('o')
                         $job.result = New-ValidationJobResult $job $execution $null $code

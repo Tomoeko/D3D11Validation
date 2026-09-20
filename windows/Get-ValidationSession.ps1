@@ -43,7 +43,8 @@ public static class ValidationSession {
 }
 
 [ordered]@{
-    schema = 'd3d11-worker-session/v1'
+    schema = 'd3d11-worker-session/v2'
+    bootUtc = (Get-CimInstance -ClassName Win32_OperatingSystem -OperationTimeoutSec 5).LastBootUpTime.ToUniversalTime().ToString('o')
     collectedUtc = [DateTime]::UtcNow.ToString('o')
     dedicatedAccount = $dedicatedAccount
     elevated = $elevated

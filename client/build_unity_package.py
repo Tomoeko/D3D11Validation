@@ -25,7 +25,6 @@ def main():
     parser.add_argument('--reference-ps', type=Path)
     parser.add_argument('--reference-pixels', type=Path)
     parser.add_argument('--deployment', required=True)
-    parser.add_argument('--adapter-ordinal', type=int, choices=range(64), required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--manifest', type=Path, required=True)
     args = parser.parse_args()
@@ -65,8 +64,8 @@ def main():
     required = {'RuntimeProbe.exe', 'UnityPlayer.dll', 'RuntimeProbe_Data/globalgamemanagers'}
     if not required <= content.keys():
         raise ValueError('Missing required private player files')
-    manifest = dict(schema='d3d11-unity-' + mode + '-package/v1', deployment=args.deployment,
-                    adapterOrdinal=args.adapter_ordinal,
+    manifest = dict(schema='d3d11-unity-' + mode + '-package/v2', deployment=args.deployment,
+                    adapterSelection='unique-current-inventory',
                     files={name: hashlib.sha256(data).hexdigest() for name, data in content.items()})
     if mode != 'startup':
         manifest['creationFlags'] = args.creation_flags

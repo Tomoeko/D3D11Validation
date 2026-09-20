@@ -14,6 +14,8 @@ import json
 from pathlib import Path
 import struct
 
+from adapter_evidence import verify_selection
+
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('client', ROOT/'client/validation_client.py')
 client = importlib.util.module_from_spec(spec)
@@ -40,7 +42,7 @@ def verify(result, kind, policy_hash, policy, package, baseline):
     fixture = record['fixture']
     files = {a['name']:base64.b64decode(a['base64'],validate=True) for a in fixture['artifacts']}
     env = fixture['environment']
-    require(env['adapter'] == baseline['adapter'], 'Adapter drift')
+    verify_selection(record, files, baseline, policy)
     for key, expected in [('featureLevel',package['featureLevel']), ('creationFlags',package['creationFlags']),
                           ('operatingSystem',baseline['operatingSystem']), ('processSessionId',0),
                           ('clientProtocolType',-1), ('connectionState',-1), ('executionContext','Session0')]:
@@ -55,6 +57,12 @@ def verify(result, kind, policy_hash, policy, package, baseline):
     require(digest(json.dumps(env,separators=(',',':'),ensure_ascii=False).encode()) ==
             fixture['environmentSha256'], 'Environment content mismatch')
     require(env['nativeHardwarePreflightPassed'] and not env['fullQualificationComplete'], 'Qualification mismatch')
+    expected_images = ['RuntimeProbe.exe', 'UnityPlayer.dll',
+                       'MonoBleedingEdge/EmbedRuntime/mono-2.0-bdwgc.dll',
+                       'RuntimeProbe_Data/Managed/Assembly-CSharp.dll']
+    require(env.get('playerImages') == [dict(file=name, sha256=package['files'][name])
+                                       for name in expected_images], 'Loaded player image drift')
+    require(env.get('loadedImageClosureComplete') is False, 'Unexpected complete image closure claim')
     comparison = fixture['comparison']
     require(comparison['case'] == kind and comparison['profileMatched'] and
             comparison['repeatedPixelsEqual'], 'Profile or repeat mismatch')

@@ -163,11 +163,14 @@ public sealed class RenderRuntime : MonoBehaviour
                 throw new Exception("Existing output");
             Directory.CreateDirectory(output);
             var report = new List<string>();
-            Record(report, "schema", "dxbc-private-player-draw-domain/v2");
+            Record(report, "schema", "dxbc-private-player-draw-domain/v3");
             Record(report, "instrumentation", trace);
             Record(report, "bundle_sha256", Hash(File.ReadAllBytes(input)));
             Record(report, "player_metadata_sha256",
                    Hash(File.ReadAllBytes(Path.Combine(Application.dataPath, "globalgamemanagers"))));
+            string harnessPath = typeof(RenderRuntime).Assembly.Location;
+            Record(report, "harness_path", harnessPath);
+            Record(report, "harness_sha256", Hash(File.ReadAllBytes(harnessPath)));
             Record(report, "unity_version", Application.unityVersion);
             Record(report, "backend", SystemInfo.graphicsDeviceType);
             Record(report, "device", SystemInfo.graphicsDeviceName);

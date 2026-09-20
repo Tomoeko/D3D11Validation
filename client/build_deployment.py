@@ -16,6 +16,7 @@ WORKER_FILES = (
     'Start-ValidationWorker.ps1', 'Stop-ValidationWorker.ps1',
     'Validation.Setup.psm1', 'Validation.Unity.psm1', 'Validation.Graphics.psm1',
     'Validation.Archive.psm1',
+    'Validation.Submission.psm1', 'Validation.Adapter.psm1',
 )
 
 

@@ -52,7 +52,7 @@ class ResultBindingTests(unittest.TestCase):
         self.job['submitRequest'] = {'kind': 'device'}
         response = copy.deepcopy(self.response)
         artifacts = []
-        for name, data in [('adapters.json', b'{}'), ('report.json', b'{}'), ('pixels.bin', bytes(256))]:
+        for name, data in [('selection-adapters.json', b'{}'), ('adapters.json', b'{}'), ('report.json', b'{}'), ('pixels.bin', bytes(256))]:
             artifacts.append(dict(name=name, byteLength=len(data),
                                   sha256=hashlib.sha256(data).hexdigest(),
                                   base64=base64.b64encode(data).decode()))
@@ -82,7 +82,7 @@ class ResultBindingTests(unittest.TestCase):
         for mode in ('traced','untraced','unhooked'):
             self.job['submitRequest'] = {'kind':'unity-recovered-off-tier0-' + mode}
             response = copy.deepcopy(self.response)
-            names = ['device.bin','result.tsv','pixels.bin']
+            names = ['device.bin','result.tsv','pixels.bin','selection-adapters.json']
             if mode != 'unhooked': names.append('draws.bin')
             if mode == 'traced':
                 names += [f'draw-{draw:04d}-{stage}.bin' for draw in (1,2) for stage in ('vs','ps')]
