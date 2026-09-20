@@ -1,6 +1,7 @@
 // A bounded native D3D11 preflight. Shader comparison is a separate qualification.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "adapter_policy.h"
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
@@ -190,8 +191,8 @@ int wmain(int argc, wchar_t** argv) {
                 ? description.AdapterLuid.LowPart == requested_luid.LowPart &&
                     description.AdapterLuid.HighPart == requested_luid.HighPart
                 : index == selected_index;
-            if (identity_matches && description.VendorId == 0xffff &&
-                std::wstring(description.Description) == L"Example Hardware Adapter" &&
+            if (identity_matches && description.VendorId == VALIDATION_ADAPTER_VENDOR_ID &&
+                std::wstring(description.Description) == VALIDATION_ADAPTER_NAME &&
                 !(description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
                 require(!selected.value, "ambiguous adapter identity");
                 selected_index = index;

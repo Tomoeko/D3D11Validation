@@ -3,6 +3,7 @@ import importlib.util
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -12,6 +13,13 @@ spec.loader.exec_module(deployment)
 
 
 class GatewayEntryTests(unittest.TestCase):
+    def test_deployment_requires_explicit_private_baseline(self):
+        result = subprocess.run([sys.executable, str(Path(deployment.__file__)),
+                                 '--diagnostic', 'unused.exe', '--deployment', 'worker-v1',
+                                 '--output', 'unused.zip'], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('--native-baseline', result.stderr)
+
     def test_exit_status_propagation(self):
         powershell = shutil.which('pwsh') or shutil.which('powershell')
         if not powershell:

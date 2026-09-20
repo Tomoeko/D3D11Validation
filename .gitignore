@@ -3,6 +3,10 @@
 /artifacts/
 /build/
 /secrets/
+/evidence/
+/config/native-baseline.json
+*.zip
+*.bundle
 *.local.json
 *.local.ps1
 *.log

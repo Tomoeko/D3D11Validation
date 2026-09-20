@@ -1,0 +1,105 @@
+{
+  "adapter": {
+    "name": "Example Hardware Adapter",
+    "vendorId": 1234,
+    "deviceId": 5678,
+    "subsystemId": 10,
+    "revision": 1,
+    "software": false
+  },
+  "featureLevel": 45312,
+  "creationFlags": 32,
+  "runtimeIdentities": [
+    {
+      "file": "example-runtime-0.dll",
+      "version": "0.0.0.0",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "signatures": [
+        {
+          "type": "Catalog",
+          "signer": "Example Test Signer",
+          "certificateSha256": "5555555555555555555555555555555555555555555555555555555555555555"
+        },
+        {
+          "type": "Authenticode",
+          "signer": "Example Test Signer",
+          "certificateSha256": "6666666666666666666666666666666666666666666666666666666666666666"
+        }
+      ]
+    },
+    {
+      "file": "example-runtime-1.dll",
+      "version": "0.0.0.0",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "signatures": [
+        {
+          "type": "Catalog",
+          "signer": "Example Test Signer",
+          "certificateSha256": "5555555555555555555555555555555555555555555555555555555555555555"
+        },
+        {
+          "type": "Authenticode",
+          "signer": "Example Test Signer",
+          "certificateSha256": "6666666666666666666666666666666666666666666666666666666666666666"
+        }
+      ]
+    },
+    {
+      "file": "example-runtime-2.dll",
+      "version": "0.0.0.0",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "signatures": [
+        {
+          "type": "Catalog",
+          "signer": "Example Test Signer",
+          "certificateSha256": "5555555555555555555555555555555555555555555555555555555555555555"
+        },
+        {
+          "type": "Authenticode",
+          "signer": "Example Test Signer",
+          "certificateSha256": "6666666666666666666666666666666666666666666666666666666666666666"
+        }
+      ]
+    },
+    {
+      "file": "example-runtime-3.dll",
+      "version": "0.0.0.0",
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "signatures": [
+        {
+          "type": "Catalog",
+          "signer": "Example Test Signer",
+          "certificateSha256": "5555555555555555555555555555555555555555555555555555555555555555"
+        },
+        {
+          "type": "Authenticode",
+          "signer": "Example Test Signer",
+          "certificateSha256": "6666666666666666666666666666666666666666666666666666666666666666"
+        }
+      ]
+    }
+  ],
+  "operatingSystem": "0.0.0.0",
+  "schema": "d3d11-native-environment-baseline/v4",
+  "hostAlias": "example-host",
+  "allowedSessionId": 0,
+  "sessionProtocolsByConnectionState": {
+    "-1": -1
+  },
+  "executionContext": "Session0",
+  "rejectedAdapters": {
+    "reject-software": {
+      "name": "Example Software Adapter",
+      "vendorId": 9,
+      "deviceId": 10,
+      "software": true
+    },
+    "reject-other-gpu": {
+      "name": "Example Other Hardware",
+      "vendorId": 11,
+      "deviceId": 12,
+      "software": false
+    }
+  },
+  "adapterSelection": "unique-current-inventory"
+}

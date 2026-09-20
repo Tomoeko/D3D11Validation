@@ -82,14 +82,14 @@ function New-ValidationUnityFixture([string]$Output, $Guard, [string]$Kind, $Sel
     }
 }
 
-function Get-ValidationUnityStartupSummary([byte[]]$Log, [bool]$CaptureAvailable) {
+function Get-ValidationUnityStartupSummary([byte[]]$Log, [bool]$CaptureAvailable, [string]$ExpectedGpuName) {
     $text = [Text.Encoding]::UTF8.GetString($Log)
     # Only explicit booleans and a content hash leave the host. Unity logs can
     # contain personal profile paths, so never return raw log lines or exceptions.
     return [ordered]@{
         schema='d3d11-unity-startup/v1'; logSha256=Get-ValidationDigest $Log; logBytes=$Log.Length
         direct3d11Mentioned=($text -match '(?i)Direct3D\s*11|Direct3D11')
-        expectedGpuMentioned=($text -match 'Example Hardware Adapter')
+        expectedGpuMentioned=($ExpectedGpuName.Length -gt 0 -and $text.Contains($ExpectedGpuName))
         graphicsInitializationFailed=($text -match '(?i)Failed to initialize graphics|Failed to create graphics device|InitializeEngineGraphics failed')
         traceEntryUnavailable=($text -match 'EntryPointNotFoundException[^\r\n]*DXBCTraceBegin|Unable to find an entry point named .DXBCTraceBegin')
         captureAvailable=$CaptureAvailable; loadedRuntimeQualified=$false; fullQualificationComplete=$false
@@ -325,7 +325,7 @@ function Complete-ValidationUnityFixture($Fixture, [string]$State) {
     if ($Fixture.kind -cne 'unity-startup' -and $State -ceq 'completed') { return Complete-ValidationUnityDraw $Fixture }
     $log = $Fixture.outputGuard.ReadBytes('unity-log.bin', 2097152)
     $captured = $Fixture.outputGuard.Exists('pixels.bin')
-    $summary = Get-ValidationUnityStartupSummary $log $captured
+    $summary = Get-ValidationUnityStartupSummary $log $captured $Fixture.selection.adapter.name
     $bytes = [Text.Encoding]::UTF8.GetBytes(($summary | ConvertTo-Json -Compress))
     return [ordered]@{
         artifacts=@([ordered]@{name='unity-startup.json'; byteLength=$bytes.Length

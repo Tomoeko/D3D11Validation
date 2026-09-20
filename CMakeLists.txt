@@ -5,6 +5,21 @@ if(NOT WIN32)
     message(FATAL_ERROR "Build on Windows or configure a Windows cross compiler.")
 endif()
 
+set(D3D11_VALIDATION_BASELINE "" CACHE FILEPATH "Reviewed private host baseline JSON")
+if(NOT EXISTS "${D3D11_VALIDATION_BASELINE}")
+    message(FATAL_ERROR "Set D3D11_VALIDATION_BASELINE to a reviewed private host baseline JSON file.")
+endif()
+file(READ "${D3D11_VALIDATION_BASELINE}" validation_baseline)
+string(JSON VALIDATION_ADAPTER_NAME GET "${validation_baseline}" adapter name)
+string(JSON VALIDATION_ADAPTER_VENDOR_ID GET "${validation_baseline}" adapter vendorId)
+# Restrict generated C++ literals: the private policy is data, never source code.
+if(NOT VALIDATION_ADAPTER_NAME MATCHES "^[A-Za-z0-9_ .()+-]+$" OR
+   NOT VALIDATION_ADAPTER_VENDOR_ID MATCHES "^(0|[1-9][0-9]*)$" OR
+   VALIDATION_ADAPTER_VENDOR_ID GREATER 4294967295)
+    message(FATAL_ERROR "Unsupported adapter name or vendorId in private baseline.")
+endif()
+configure_file(native/adapter_policy.h.in generated/adapter_policy.h @ONLY)
+
 add_library(unity-trace SHARED native/unity_trace.c native/unity_trace.def native/graphics_identity.c)
 add_library(validation-observer SHARED native/unity_observer.c native/graphics_identity.c)
 target_link_libraries(unity-trace PRIVATE shell32)
@@ -21,6 +36,7 @@ foreach(target unity-trace validation-observer)
 endforeach()
 
 add_executable(device-probe native/device_probe.cpp)
+target_include_directories(device-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_features(device-probe PRIVATE cxx_std_17)
 target_link_libraries(device-probe PRIVATE wtsapi32 psapi advapi32)
 if(MSVC)

@@ -1,0 +1,4 @@
+// Generated from operator-owned configuration. Keep generated builds private.
+#pragma once
+#define VALIDATION_ADAPTER_NAME L"@VALIDATION_ADAPTER_NAME@"
+#define VALIDATION_ADAPTER_VENDOR_ID @VALIDATION_ADAPTER_VENDOR_ID@u

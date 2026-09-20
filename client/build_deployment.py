@@ -33,6 +33,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--diagnostic', type=Path, required=True)
     parser.add_argument('--device-probe', type=Path)
+    parser.add_argument('--native-baseline', type=Path, required=True,
+                        help='Reviewed private host baseline; never use a synthetic test fixture')
     parser.add_argument('--unity-package', type=Path, help='Reviewed private Unity package manifest')
     parser.add_argument('--unhooked-package', type=Path, help='Reviewed package without local D3D11 interception')
     parser.add_argument('--output', type=Path, required=True)
@@ -47,7 +49,7 @@ def main():
     content['gateway-entry.ps1'] = gateway_entry(args.deployment)
     content['Test-JobRuntime.ps1'] = (ROOT/'tests/Test-JobRuntime.ps1').read_bytes()
     content['diagnostic.exe'] = args.diagnostic.read_bytes()
-    baseline = json.loads((ROOT/'config/native-baseline.json').read_text())
+    baseline = json.loads(args.native_baseline.read_text())
     baseline['executionContext'] = args.context
     if args.context == 'Session0':
         baseline['allowedSessionId'] = 0
