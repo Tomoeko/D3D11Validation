@@ -74,7 +74,7 @@ public sealed class ValidationStore : IDisposable {
         directories.Add(handle); Verify(handle, path, true);
     }
     string Resolve(string name) {
-        if (!System.Text.RegularExpressions.Regex.IsMatch(name, "\\A[a-z0-9-]+\\.(json|bin)\\z")) throw new IOException("invalid_store_name");
+        if (!System.Text.RegularExpressions.Regex.IsMatch(name, "\\A[a-z0-9-]+\\.(json|bin|tsv)\\z")) throw new IOException("invalid_store_name");
         return Path.Combine(root, name);
     }
     static FileStream OpenFile(string path, bool write, bool create) {

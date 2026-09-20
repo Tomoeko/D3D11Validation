@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import secrets
 import subprocess
+import time
 
 OPERATIONS = frozenset(('submit', 'start', 'status', 'results', 'cancel'))
 
@@ -75,19 +76,27 @@ def operate(config, operation, job):
             raise ValueError('Missing successful execution')
     fixture = (response.get('result') or {}).get('fixture')
     expected_kind = job.get('submitRequest', {}).get('kind')
-    if operation == 'results' and response.get('state') == 'completed' and expected_kind == 'device' and not fixture:
+    unity = isinstance(expected_kind, str) and expected_kind.startswith('unity-')
+    if operation == 'results' and response.get('state') == 'completed' and (expected_kind == 'device' or unity) and not fixture:
         raise ValueError('Missing native preflight evidence')
     if fixture:
+        expected_names = {'adapters.json','report.json','pixels.bin'}
+        if unity:
+            expected_names = {'unity-startup.json'}
+            if expected_kind != 'unity-startup' and response['state'] == 'completed':
+                expected_names = {'device.bin','draws.bin','result.tsv','pixels.bin'}
+                if expected_kind.endswith('-traced'):
+                    expected_names |= {f'draw-{draw:04d}-{stage}.bin' for draw in (1,2) for stage in ('vs','ps')}
         names = set()
         for artifact in fixture.get('artifacts', []):
             name = artifact.get('name')
-            if name not in ('adapters.json','report.json','pixels.bin') or name in names:
+            if name not in expected_names or name in names:
                 raise ValueError('Unexpected artifact name')
             names.add(name)
             data = base64.b64decode(artifact['base64'], validate=True)
             if len(data) != artifact['byteLength'] or hashlib.sha256(data).hexdigest() != artifact['sha256']:
                 raise ValueError('Artifact content mismatch')
-        if response['state'] == 'completed' and names != {'adapters.json','report.json','pixels.bin'}:
+        if response['state'] == 'completed' and names != expected_names:
             raise ValueError('Missing native preflight artifact')
     return response
 
@@ -104,12 +113,44 @@ def save(path, record):
     os.replace(temporary, path)
 
 
+def run_fixture(config, kind, policy_hash, output, timeout=90):
+    """Run once, preserving the submit nonce, job identity and raw terminal result.
+
+    Transport failure leaves durable recovery material. It never starts another
+    job automatically or overwrites a previous investigation.
+    """
+    job_path = output.with_suffix('.job.json')
+    if output.exists() or job_path.exists():
+        raise FileExistsError('Preserve previous fixture evidence')
+    nonce = secrets.token_hex(32)
+    save(job_path, dict(schema='d3d11-pending-submit/v1', nonce=nonce,
+                        kind=kind, durationMs=0))
+    job = submit(config, kind=kind, nonce=nonce)
+    save(job_path, job)
+    if job['deploymentSha256'] != policy_hash:
+        raise ValueError('Unapproved fixture deployment; job was not started')
+    started = operate(config, 'start', job)
+    job['executionNonce'] = started['executionNonce']
+    save(job_path, job)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status = operate(config, 'status', job)
+        if status.get('recoveryRequired'):
+            raise RuntimeError('Worker recovery required; preserve the interrupted job')
+        if status['state'] in ('completed', 'failed', 'cancelled', 'timed_out', 'stale'):
+            result = operate(config, 'results', job)
+            save(output, result)
+            return result
+        time.sleep(1)
+    raise TimeoutError('Fixture did not finish; preserve the job for status or cancellation')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--ssh-config', type=Path, default=Path('.local/ssh_config'))
     parser.add_argument('--job', type=Path)
     parser.add_argument('--duration-ms', type=int, default=0)
-    parser.add_argument('--kind', choices=('diagnostic','device','reject-software','reject-other-gpu','reject-session'), default='diagnostic')
+    parser.add_argument('--kind', default='diagnostic', help='Fixed fixture name approved by the server')
     parser.add_argument('operation', choices=sorted(OPERATIONS))
     args = parser.parse_args()
     if args.operation == 'status' and args.job is None:

@@ -15,9 +15,23 @@ foreach ($operation in 'start','status','results','cancel') {
 foreach ($kind in 'device','reject-software','reject-other-gpu','reject-session') {
     $null = ConvertFrom-ValidationRequest submit ($submit.Replace('diagnostic',$kind).Replace('200','0'))
 }
+$unityKinds = @('unity-startup')
+foreach ($bundle in 'recovered','regenerated','negative') {
+    foreach ($keyword in 'on','off') {
+        foreach ($tier in 0,1,2) {
+            foreach ($capture in 'traced','untraced') { $unityKinds += "unity-$bundle-$keyword-tier$tier-$capture" }
+        }
+    }
+}
+foreach ($kind in $unityKinds) {
+    $null = ConvertFrom-ValidationRequest submit ($submit.Replace('diagnostic',$kind).Replace('200','0'))
+}
 $cases = @(
     @('submit', ''), @('submit', '{}'), @('submit', '[]'), @('submit', 'null'),
     @('submit', $submit.Replace('diagnostic','device')),
+    @('submit', $submit.Replace('diagnostic','unity-recovered-off-tier0-traced')),
+    @('submit', $submit.Replace('diagnostic','unity-recovered-off-tier3-traced').Replace('200','0')),
+    @('submit', $submit.Replace('diagnostic','unity-unapproved-off-tier0-traced').Replace('200','0')),
     @('submit', $submit.Replace('}', ',"adapterOrdinal":"0"}')),
     @('submit', ($submit + ' trailing')), @('submit', ('[' + $submit + ']')),
     @('submit', $submit.Replace('"version":"1"', '"version":"1","version":"1"')),
@@ -48,4 +62,4 @@ foreach ($case in $cases) {
     if (-not $rejected) { throw ('Protocol rejection failed for case ' + $caseIndex) }
     $caseIndex++
 }
-Write-Output ('PASS: nine valid requests and ' + $cases.Count + ' rejected protocol cases.')
+Write-Output ('PASS: ' + (9 + $unityKinds.Count) + ' valid requests and ' + $cases.Count + ' rejected protocol cases.')

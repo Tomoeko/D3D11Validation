@@ -71,12 +71,12 @@ try {
                     try {
                         $execution.session = & (Join-Path $PSScriptRoot 'Get-ValidationSession.ps1') -Context $policy.executionContext | ConvertFrom-Json
                         $fixture = New-ValidationFixture $job $execution.session
-                        $exe = Join-Path $PSScriptRoot $fixture.executable
-                        $execution.binarySha256 = $policy.files.($fixture.executable)
+                        $exe = $fixture.executable
+                        $execution.binarySha256 = $fixture.binarySha256
                         if ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant() -cne $execution.binarySha256) {
                             throw 'executable_hash_mismatch'
                         }
-                        $child = [ValidationChild]::new($exe, $fixture.arguments, $PSScriptRoot)
+                        $child = [ValidationChild]::new($exe, $fixture.arguments, $fixture.workingDirectory)
                         $execution.childPid = $child.Id
                         $active = $job
                     } catch {

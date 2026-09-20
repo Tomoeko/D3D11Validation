@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 from pathlib import Path
 import unittest
+import tempfile
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('client', Path(__file__).parents[1] / 'client/validation_client.py')
@@ -76,6 +77,44 @@ class ResultBindingTests(unittest.TestCase):
                 else: response['result']['fixture']['artifacts'].append(
                     copy.deepcopy(response['result']['fixture']['artifacts'][0]))
                 with self.assertRaises(ValueError): self.request(response)
+
+    def test_unity_artifact_sets(self):
+        for mode in ('traced','untraced'):
+            self.job['submitRequest'] = {'kind':'unity-recovered-off-tier0-' + mode}
+            response = copy.deepcopy(self.response)
+            names = ['device.bin','draws.bin','result.tsv','pixels.bin']
+            if mode == 'traced':
+                names += [f'draw-{draw:04d}-{stage}.bin' for draw in (1,2) for stage in ('vs','ps')]
+            artifacts = [dict(name=name,byteLength=0,sha256=hashlib.sha256(b'').hexdigest(),base64='')
+                         for name in names]
+            response['result']['fixture'] = dict(artifacts=artifacts)
+            self.request(response)
+            artifacts.pop()
+            with self.assertRaises(ValueError): self.request(response)
+
+    def test_unapproved_deployment_is_never_started(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)/'result.json'
+            with patch.object(client,'submit',return_value=self.job), patch.object(client,'operate') as operation:
+                with self.assertRaises(ValueError):
+                    client.run_fixture(Path('unused'),'diagnostic','f'*64,output)
+                operation.assert_not_called()
+            self.assertTrue(output.with_suffix('.job.json').exists())
+            self.assertFalse(output.exists())
+            with self.assertRaises(FileExistsError):
+                client.run_fixture(Path('unused'),'diagnostic','f'*64,output)
+
+    def test_lost_worker_preserves_job_without_rerun(self):
+        responses = [dict(executionNonce='e'*64), dict(recoveryRequired=True,state='running')]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)/'result.json'
+            with patch.object(client,'submit',return_value=copy.deepcopy(self.job)) as submit, \
+                 patch.object(client,'operate',side_effect=responses) as operation:
+                with self.assertRaises(RuntimeError):
+                    client.run_fixture(Path('unused'),'diagnostic','d'*64,output)
+                self.assertEqual(submit.call_count,1)
+                self.assertEqual([c.args[1] for c in operation.call_args_list],['start','status'])
+            self.assertTrue(output.with_suffix('.job.json').exists())
 
 
 if __name__ == '__main__': unittest.main()

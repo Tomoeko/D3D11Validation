@@ -1,6 +1,6 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot '../windows/Validation.Fixtures.psm1')
+Import-Module (Join-Path $PSScriptRoot '../windows/Validation.Graphics.psm1')
 $baseline = Get-Content (Join-Path $PSScriptRoot '../config/native-baseline.json') -Raw | ConvertFrom-Json
 $checks = 0
 foreach ($runtime in $baseline.runtimeIdentities) {

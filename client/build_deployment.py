@@ -14,6 +14,7 @@ WORKER_FILES = (
     'Validation.Fixtures.psm1',
     'Get-ValidationSession.ps1', 'Invoke-ValidationJobGateway.ps1',
     'Start-ValidationWorker.ps1', 'Stop-ValidationWorker.ps1',
+    'Validation.Setup.psm1', 'Validation.Unity.psm1', 'Validation.Graphics.psm1',
 )
 
 
@@ -30,6 +31,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--diagnostic', type=Path, required=True)
     parser.add_argument('--device-probe', type=Path)
+    parser.add_argument('--unity-package', type=Path, help='Reviewed private startup package manifest')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--deployment', required=True, help='Protected directory name, such as worker-v5')
     parser.add_argument('--context', choices=('Interactive','Session0'), default='Interactive')
@@ -50,6 +52,8 @@ def main():
     content['native-baseline.json'] = (json.dumps(baseline,indent=2)+'\n').encode()
     if args.device_probe:
         content['device-probe.exe'] = args.device_probe.read_bytes()
+    if args.unity_package:
+        content['unity-package.json'] = args.unity_package.read_bytes()
     hashes = {name:hashlib.sha256(data).hexdigest() for name,data in content.items()}
     policy = {
         'schema':'d3d11-worker-policy/v1',

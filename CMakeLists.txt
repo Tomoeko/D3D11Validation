@@ -1,8 +1,19 @@
 cmake_minimum_required(VERSION 3.20)
-project(D3D11Validation LANGUAGES CXX)
+project(D3D11Validation LANGUAGES C CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "Build on Windows or configure a Windows cross compiler.")
+endif()
+
+add_library(unity-trace SHARED native/unity_trace.c native/unity_trace.def)
+target_compile_features(unity-trace PRIVATE c_std_11)
+target_link_libraries(unity-trace PRIVATE dxguid shell32 psapi advapi32)
+set_target_properties(unity-trace PROPERTIES PREFIX "")
+if(MSVC)
+    target_compile_options(unity-trace PRIVATE /W4 /WX)
+else()
+    target_compile_options(unity-trace PRIVATE -Wall -Wextra -Werror)
+    target_link_options(unity-trace PRIVATE -static)
 endif()
 
 add_executable(device-probe native/device_probe.cpp)

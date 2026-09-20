@@ -1,0 +1,14 @@
+schema	d3d11-native-unity-draw/v1
+capture	on
+create-device	00000000
+device	45056	32
+context	0
+create-device	00000000
+begin	1	42
+active-device	1	1	45056	32
+draw	1	DrawIndexed	6	1	0	0	0	0	42	340	264	0	0	0	0	0
+end	1	1	0
+begin	2	42
+active-device	2	2	45056	32
+draw	2	DrawIndexed	6	1	0	0	0	0	42	340	264	0	0	0	0	0
+end	2	1	0
