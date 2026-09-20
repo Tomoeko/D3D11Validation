@@ -15,6 +15,9 @@ import struct
 import subprocess
 import sys
 
+# Isolated Python excludes the script directory. Admit only this explicit
+# adjacent client implementation; user-site and PYTHONPATH remain disabled.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from unity_evidence import read_authority, require, retrieve_verified
 
 
