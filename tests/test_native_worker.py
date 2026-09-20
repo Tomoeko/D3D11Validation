@@ -29,11 +29,20 @@ def verify(result, kind, policy_hash, binary_hash, baseline, session_state):
     assert files['pixels.bin'] == struct.pack('<4f',.25,.5,.75,1) * 16
     report = json.loads(files['report.json'])
     env = fixture['environment']
-    expected_adapter = dict(baseline['adapter'],ordinal=baseline['adapterOrdinalsByConnectionState'][str(session_state)])
+    expected_adapter = dict(baseline['adapter'],ordinal=report['adapter']['ordinal'])
     assert env['adapter'] == expected_adapter, 'Adapter identity drift'
-    for key in ('featureLevel','creationFlags','runtimeIdentities','operatingSystem'):
+    for key in ('featureLevel','creationFlags','operatingSystem'):
         assert env[key] == baseline[key], 'Environment drift: ' + key
+    assert len(env['runtimeIdentities']) == len(baseline['runtimeIdentities'])
+    for identity, pinned in zip(env['runtimeIdentities'], baseline['runtimeIdentities']):
+        for field in ('file','version','sha256'):
+            assert identity[field] == pinned[field], 'Runtime identity drift: ' + field
+        assert identity['signatureStatus'] == 'Valid'
+        observed_signature = dict(type=identity['signatureType'], signer=identity['signer'],
+                                  certificateSha256=identity['certificateSha256'])
+        assert observed_signature in pinned['signatures'], 'Unapproved runtime certificate'
     assert env['processSessionId'] == baseline['allowedSessionId']
+    assert env['executionContext'] == baseline['executionContext'] == report['executionContext']
     assert env['clientProtocolType'] == baseline['sessionProtocolsByConnectionState'][str(session_state)]
     assert env['connectionState'] == session_state == report['connectionState']
     assert env['nativeHardwarePreflightPassed'] and not env['fullQualificationComplete']
@@ -49,13 +58,13 @@ def main():
     parser.add_argument('--ssh-config',type=Path,default=Path('.local/ssh_config'))
     parser.add_argument('--policy',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True)
-    parser.add_argument('--session-state',type=int,choices=(0,4),required=True)
+    parser.add_argument('--session-state',type=int,choices=(-1,0,4),required=True)
     parser.add_argument('--positive-only',action='store_true')
     args = parser.parse_args()
     if args.output.exists(): parser.error('Evidence output already exists')
     policy = json.loads(args.policy.read_text())
     policy_hash = hashlib.sha256(args.policy.read_bytes()).hexdigest()
-    baseline = json.loads((ROOT/'config/native-baseline.json').read_text())
+    baseline = json.loads(args.policy.with_name('native-baseline.json').read_text())
     results = []
     kinds = ['device','device'] + ([] if args.positive_only else ['reject-software','reject-other-gpu'])
     for kind in kinds:

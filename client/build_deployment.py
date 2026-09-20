@@ -32,6 +32,7 @@ def main():
     parser.add_argument('--device-probe', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--deployment', required=True, help='Protected directory name, such as worker-v5')
+    parser.add_argument('--context', choices=('Interactive','Session0'), default='Interactive')
     parser.add_argument('--allow-dirty', action='store_true')
     args = parser.parse_args()
     state = subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True)
@@ -41,7 +42,12 @@ def main():
     content['gateway-entry.ps1'] = gateway_entry(args.deployment)
     content['Test-JobRuntime.ps1'] = (ROOT/'tests/Test-JobRuntime.ps1').read_bytes()
     content['diagnostic.exe'] = args.diagnostic.read_bytes()
-    content['native-baseline.json'] = (ROOT/'config/native-baseline.json').read_bytes()
+    baseline = json.loads((ROOT/'config/native-baseline.json').read_text())
+    baseline['executionContext'] = args.context
+    if args.context == 'Session0':
+        baseline['allowedSessionId'] = 0
+        baseline['sessionProtocolsByConnectionState'] = {'-1': -1}
+    content['native-baseline.json'] = (json.dumps(baseline,indent=2)+'\n').encode()
     if args.device_probe:
         content['device-probe.exe'] = args.device_probe.read_bytes()
     hashes = {name:hashlib.sha256(data).hexdigest() for name,data in content.items()}
@@ -49,6 +55,7 @@ def main():
         'schema':'d3d11-worker-policy/v1',
         'sourceRevision':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
         'sourceState':'candidate-not-checkpointed' if state else 'clean-checkpoint',
+        'executionContext':args.context,
         'files':hashes,
     }
     content['worker-policy.json'] = (json.dumps(policy,indent=2)+'\n').encode()

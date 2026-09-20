@@ -1,4 +1,4 @@
-# Start only from the dedicated account's existing interactive, non-elevated logon.
+# Start in the protected policy's explicit, non-elevated execution context.
 [CmdletBinding()]
 param()
 Set-StrictMode -Version Latest
@@ -6,11 +6,10 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'Validation.Jobs.psm1')
 Import-Module (Join-Path $PSScriptRoot 'Validation.Protocol.psm1')
 Import-Module (Join-Path $PSScriptRoot 'Validation.Fixtures.psm1')
-$session = & (Join-Path $PSScriptRoot 'Get-ValidationSession.ps1') | ConvertFrom-Json
-if ($session.clientProtocolType -notin @(0,2) -or $session.connectionState -notin @(0,4)) { throw 'unsupported_session' }
 $epoch = New-ValidationNonce
 $deployment = Get-ValidationDeployment
 $policy = Get-ValidationPolicy
+$session = & (Join-Path $PSScriptRoot 'Get-ValidationSession.ps1') -Context $policy.executionContext | ConvertFrom-Json
 # A held named mutex prevents simultaneous workers in different terminal sessions.
 $singleton = [Threading.Mutex]::new($false, 'Global\D3D11ValidationWorker-v1')
 try { $acquired = $singleton.WaitOne(0) } catch [Threading.AbandonedMutexException] { $acquired = $true }
@@ -45,7 +44,7 @@ try {
                     $fixtureEvidence = $null
                     $failureCode = $null
                     try { $fixtureEvidence = Complete-ValidationFixture $fixture $latest $terminal }
-                    catch { $terminal = 'failed'; $failureCode = 'fixture_validation_failed' }
+                    catch { $terminal = 'failed'; $failureCode = Get-ValidationFixtureFailureCode $_ }
                     finally { if ($null -ne $fixture.outputGuard) { $fixture.outputGuard.Dispose() } }
                     $latest.state = $terminal; $latest.updatedUtc = $now
                     $latest.result = New-ValidationJobResult $latest $execution $fixtureEvidence $failureCode
@@ -70,7 +69,7 @@ try {
                     $timer = [Diagnostics.Stopwatch]::StartNew()
                     $execution = [pscustomobject]@{timer=$timer; session=$null; binarySha256=$null; childPid=$null}
                     try {
-                        $execution.session = & (Join-Path $PSScriptRoot 'Get-ValidationSession.ps1') | ConvertFrom-Json
+                        $execution.session = & (Join-Path $PSScriptRoot 'Get-ValidationSession.ps1') -Context $policy.executionContext | ConvertFrom-Json
                         $fixture = New-ValidationFixture $job $execution.session
                         $exe = Join-Path $PSScriptRoot $fixture.executable
                         $execution.binarySha256 = $policy.files.($fixture.executable)

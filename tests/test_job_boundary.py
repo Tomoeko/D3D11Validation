@@ -19,6 +19,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--ssh-config', type=Path, default=Path('.local/ssh_config'))
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--session-id', type=int, required=True, help='Exact worker session expected for this campaign')
     args = parser.parse_args()
     checks = []
     raw = []
@@ -47,8 +48,8 @@ def main():
         return response
     status = client.invoke(args.ssh_config,'status')
     assert status['allowedOperations'] == ['submit','start','status','results','cancel']
-    assert status['worker']['sessionId'] != 0 and not status['worker']['elevated']
-    passed('interactive_standard_worker')
+    assert status['worker']['sessionId'] == args.session_id and not status['worker']['elevated']
+    passed('expected_standard_worker_session')
     job = client.submit(args.ssh_config,0)
     same = client.invoke(args.ssh_config,'submit',job['submitRequest'])
     assert all(same[key] == job[key] for key in ('jobId','capability','inputSha256'))
@@ -114,7 +115,7 @@ def main():
     start(retry)
     assert finish(retry)['state'] == 'completed'
     passed('interrupted_submission_and_reconnect')
-    client.save(args.output,{'schema':'d3d11-job-boundary/v1','checks':checks,'results':raw})
+    client.save(args.output,{'schema':'d3d11-job-boundary/v1','expectedSessionId':args.session_id,'checks':checks,'results':raw})
     print('PASS:',len(checks),'live job checks; raw evidence saved to ignored output')
 
 

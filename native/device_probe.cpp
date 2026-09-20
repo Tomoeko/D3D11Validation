@@ -105,6 +105,8 @@ std::string loaded_modules() {
 int wmain(int argc, wchar_t** argv) {
     // Operator supplies an empty, owned output directory. The job API never
     // accepts this path or arbitrary executable arguments from a remote request.
+    const bool session_zero = argc > 2 && std::wstring(argv[argc - 1]) == L"--session0";
+    if (session_zero) --argc;
     if (argc != 2 && argc != 3 && argc != 5) return 64;
     try {
         // Omitting the ordinal performs inventory only. Rendering requires an
@@ -138,7 +140,8 @@ int wmain(int argc, wchar_t** argv) {
             && !(attributes & FILE_ATTRIBUTE_REPARSE_POINT), "owned output directory");
         require(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version") == nullptr, "Wine runtime rejected");
         DWORD session = 0;
-        require(ProcessIdToSessionId(GetCurrentProcessId(), &session) && session != 0, "interactive process session");
+        require(ProcessIdToSessionId(GetCurrentProcessId(), &session) &&
+            (session_zero ? session == 0 : session != 0), "requested process session");
         HANDLE token = nullptr;
         require(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token), "process token");
         TOKEN_ELEVATION elevation{};
@@ -150,9 +153,11 @@ int wmain(int argc, wchar_t** argv) {
         DWORD user_length = DWORD(user.size());
         require(GetUserNameW(user.data(), &user_length)
             && _wcsicmp(user.data(), L"d3d11validator") == 0, "dedicated account required");
-        const int protocol = session_value(WTSClientProtocolType, true);
-        const int state = session_value(WTSConnectState);
-        require((protocol == 0 || protocol == 2) && (state == WTSActive || state == WTSDisconnected),
+        // WTS client/presentation state is inapplicable to the noninteractive
+        // offscreen context. -1 records that explicitly; it is not a console.
+        const int protocol = session_zero ? -1 : session_value(WTSClientProtocolType, true);
+        const int state = session_zero ? -1 : session_value(WTSConnectState);
+        require(session_zero || ((protocol == 0 || protocol == 2) && (state == WTSActive || state == WTSDisconnected)),
             "unsupported interactive session state");
         HMODULE dxgi = system_module(L"dxgi.dll");
         HMODULE d3d11 = system_module(L"d3d11.dll");
@@ -245,13 +250,14 @@ int wmain(int argc, wchar_t** argv) {
         for (size_t pixel = 0; pixel < 16; ++pixel)
             require(std::memcmp(pixels.data() + pixel * 4, color.data(), sizeof(color)) == 0, "bitwise clear readback mismatch");
         require(device->GetDeviceRemovedReason() == S_OK, "device removed");
-        require(session_value(WTSClientProtocolType, true) == protocol
-            && session_value(WTSConnectState) == state, "session changed during preflight");
+        require(session_zero || (session_value(WTSClientProtocolType, true) == protocol
+            && session_value(WTSConnectState) == state), "session changed during preflight");
         write_new(output + L"\\pixels.bin", pixels.data(), DWORD(sizeof(pixels)));
         std::ostringstream report;
         report << "{\"schema\":\"d3d11-device-preflight/v1\",\"nativeHardwarePreflightPassed\":true,"
             << "\"fullQualificationComplete\":false,\"operation\":\"clear-and-readback\",\"sessionId\":" << session
             << ",\"elevated\":false,\"clientProtocolType\":" << protocol << ",\"connectionState\":" << state
+            << ",\"executionContext\":\"" << (session_zero ? "Session0" : "Interactive") << '"'
             << ",\"adapter\":{\"ordinal\":" << selected_index << ",\"name\":" << json_quote(actual.Description) << ",\"vendorId\":" << actual.VendorId
             << ",\"deviceId\":" << actual.DeviceId << ",\"subsystemId\":" << actual.SubSysId
             << ",\"revision\":" << actual.Revision << ",\"luidLow\":" << actual.AdapterLuid.LowPart

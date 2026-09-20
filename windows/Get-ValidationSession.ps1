@@ -1,6 +1,6 @@
-# Run in the dedicated account's interactive logon, never in an elevated shell.
+# Identify the explicitly selected standard-account execution context.
 [CmdletBinding()]
-param()
+param([ValidateSet('Interactive','Session0')][string]$Context = 'Interactive')
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -9,9 +9,10 @@ $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $sessionId = (Get-Process -Id $PID).SessionId
 $dedicatedAccount = $identity.Name.EndsWith('\d3d11validator', [StringComparison]::OrdinalIgnoreCase)
 $elevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $dedicatedAccount -or $elevated -or $sessionId -eq 0 -or
-    -not [Environment]::UserInteractive) {
-    throw 'An interactive, non-elevated validation-account logon is required.'
+if (-not $dedicatedAccount -or $elevated) { throw 'A non-elevated validation-account logon is required.' }
+if (($Context -ceq 'Session0' -and ($sessionId -ne 0 -or [Environment]::UserInteractive)) -or
+    ($Context -ceq 'Interactive' -and ($sessionId -eq 0 -or -not [Environment]::UserInteractive))) {
+    throw 'The process does not match its approved execution context.'
 }
 
 if (-not ('ValidationSession' -as [type])) {
@@ -47,9 +48,10 @@ public static class ValidationSession {
     dedicatedAccount = $dedicatedAccount
     elevated = $elevated
     processSessionId = $sessionId
+    executionContext = $Context
     userInteractive = [Environment]::UserInteractive
-    clientProtocolType = [ValidationSession]::Query(-1, 16, $true)
-    connectionState = [ValidationSession]::Query(-1, 8, $false)
+    clientProtocolType = $(if ($Context -ceq 'Session0') { -1 } else { [ValidationSession]::Query(-1, 16, $true) })
+    connectionState = $(if ($Context -ceq 'Session0') { -1 } else { [ValidationSession]::Query(-1, 8, $false) })
     activeConsoleSessionId = [ValidationSession]::WTSGetActiveConsoleSessionId()
     hardwareD3D11Qualified = $false
 } | ConvertTo-Json
